@@ -288,3 +288,14 @@ fn status_json_has_machine_checks() {
         .collect();
     assert_eq!(names, ["git", "ssh-agent", "gh"]);
 }
+
+#[test]
+fn open_has_short_alias() {
+    let sb = Sandbox::new();
+    sb.repo("code/a");
+    add_code_root(&sb);
+    let cfg = sb.path().join("config/config.toml");
+    let text = fs::read_to_string(&cfg).unwrap();
+    fs::write(&cfg, format!("{text}editor = \"true\"\n")).unwrap();
+    assert!(sb.picore(&["--json", "o", "a"]).status.success());
+}

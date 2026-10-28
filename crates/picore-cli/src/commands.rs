@@ -9,9 +9,9 @@ use picore_core::config::{Config, Paths, editor_command};
 use picore_core::discovery::suggest_roots;
 use picore_core::error::{Error, Result};
 use picore_core::health::{Check, ProjectHealth, machine_health, project_health};
-use picore_core::model::{Project, ProjectId};
+use picore_core::model::Project;
 use picore_core::prune::{self, Assessment, Blocker, Verdict};
-use picore_core::refresh::{index_all, refresh_many};
+use picore_core::refresh::{index_all, refresh_all};
 use picore_core::resolve::{Resolution, qualified, resolve};
 use picore_core::store::Index;
 use serde::Serialize;
@@ -98,6 +98,9 @@ fn index(json: bool, quiet: bool) -> Result<ExitCode> {
     }
     let index = Index::open(&paths.index_file)?;
     let report = index_all(&index, &cfg)?;
+    for f in &report.failed {
+        eprintln!("warn: {}: {}", f.id.0.display(), f.error);
+    }
     emit(json, &report, |r| {
         println!(
             "indexed {} projects: {} updated, {} removed",
@@ -120,14 +123,11 @@ fn confirm(prompt: &str) -> io::Result<bool> {
 }
 
 fn refreshed(paths: &Paths) -> Result<Vec<Project>> {
-    let index = Index::open(&paths.index_file)?;
-    let ids: Vec<ProjectId> = index.all()?.into_iter().map(|p| p.id).collect();
-    for (id, outcome) in refresh_many(&index, &ids) {
-        if let Err(e) = outcome {
-            eprintln!("warn: {}: {e}", id.0.display());
-        }
+    let (projects, failed) = refresh_all(&Index::open(&paths.index_file)?)?;
+    for (id, e) in failed {
+        eprintln!("warn: {}: {e}", id.0.display());
     }
-    index.all()
+    Ok(projects)
 }
 
 fn list(json: bool) -> Result<ExitCode> {
@@ -149,7 +149,7 @@ fn print_table(projects: &[Project]) {
         [
             p.name.clone(),
             p.branch.clone().unwrap_or_else(|| "-".into()),
-            p.worktrees.len().to_string(),
+            p.linked_worktrees().count().to_string(),
             if p.techs.is_empty() {
                 "-".into()
             } else {
@@ -191,7 +191,7 @@ fn open(json: bool, name: &str) -> Result<ExitCode> {
     let cfg = Config::load(&paths.config_file)?;
     let projects = refreshed(&paths)?;
     let project = match resolve(&projects, name) {
-        Resolution::Many(hits) if io::stdin().is_terminal() => pick(hits)?,
+        Resolution::Many(hits) if !json && io::stdin().is_terminal() => pick(hits)?,
         r => one(r, name)?,
     };
     let Some(path) = project
