@@ -1,0 +1,14 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+clap = { version = "4", features = ["derive"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
+thiserror = "2"
+wait-timeout = "0.2"

@@ -1,0 +1,22 @@
+name: ci
+
+on:
+  push:
+    branches: [dev, main]
+    paths: ["crates/**", "Cargo.*", "rust-toolchain.toml", ".github/workflows/ci.yml"]
+  pull_request:
+    branches: [dev, main]
+    paths: ["crates/**", "Cargo.*", "rust-toolchain.toml", ".github/workflows/ci.yml"]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+      - uses: taiki-e/install-action@just
+      - uses: Swatinem/rust-cache@v2
+      - run: just check
