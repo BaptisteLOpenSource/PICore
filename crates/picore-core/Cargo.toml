@@ -8,3 +8,6 @@ license.workspace = true
 rusqlite.workspace = true
 thiserror.workspace = true
 wait-timeout.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
