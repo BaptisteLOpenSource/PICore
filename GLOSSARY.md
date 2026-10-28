@@ -15,6 +15,11 @@ _Avoid_: Root folder, search path, whitelist entry
 One git repository found under a Scan Root, bare or not, identified by its git directory.
 _Avoid_: Repo (in code and docs), workspace, folder
 
+**Product**:
+A set of Projects the user declares as one product, with a name and, when it exists, the main
+folder they share.
+_Avoid_: Workspace, group, monorepo
+
 **Worktree**:
 An additional working tree of a Project, attached to that Project wherever it lives on disk.
 _Avoid_: Ghost folder, checkout, clone
