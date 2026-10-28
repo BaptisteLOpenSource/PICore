@@ -15,3 +15,31 @@ pub fn project_name(id: &ProjectId) -> String {
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
     name.strip_suffix(".git").unwrap_or(&name).to_owned()
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Worktree {
+    pub path: PathBuf,
+    pub branch: Option<String>,
+    pub head: Option<String>,
+    pub is_main: bool,
+    pub detached: bool,
+    pub locked: bool,
+    pub last_commit_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Project {
+    pub id: ProjectId,
+    pub name: String,
+    pub work_tree: Option<PathBuf>,
+    pub branch: Option<String>,
+    pub techs: Vec<String>,
+    pub worktrees: Vec<Worktree>,
+    pub stamp: i64,
+}
+
+impl Project {
+    pub fn linked_worktrees(&self) -> impl Iterator<Item = &Worktree> {
+        self.worktrees.iter().filter(|w| !w.is_main)
+    }
+}
