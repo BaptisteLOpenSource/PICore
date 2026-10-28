@@ -16,8 +16,8 @@ One git repository found under a Scan Root, bare or not, identified by its git d
 _Avoid_: Repo (in code and docs), workspace, folder
 
 **Product**:
-A set of Projects the user declares as one product, with a name and, when it exists, the main
-folder they share.
+A named folder the user declares as one product; every Project under that folder belongs to it.
+A Project belongs to at most one Product.
 _Avoid_: Workspace, group, monorepo
 
 **Worktree**:
