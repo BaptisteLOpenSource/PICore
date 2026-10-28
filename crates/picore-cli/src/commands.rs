@@ -325,13 +325,13 @@ fn now() -> i64 {
 
 fn assess_all<'a>(
     projects: &[&'a Project],
-    stale_days: u32,
+    cfg: &Config,
 ) -> Result<Vec<(&'a Project, Assessment)>> {
     let now = now();
     let mut out = Vec::new();
     for p in projects {
         for wt in &p.worktrees {
-            out.push((*p, prune::assess(p, wt, stale_days, now)?));
+            out.push((*p, prune::assess(p, wt, cfg, now)?));
         }
     }
     Ok(out)
@@ -352,7 +352,7 @@ fn worktrees(json: bool, name: Option<&str>) -> Result<ExitCode> {
         Some(q) => vec![one(resolve(&projects, q), q)?],
         None => projects.iter().collect(),
     };
-    let assessed = assess_all(&selected, cfg.stale_days)?;
+    let assessed = assess_all(&selected, &cfg)?;
     let rows: Vec<WorktreeRow> = assessed
         .iter()
         .map(|(p, a)| WorktreeRow {
@@ -384,7 +384,7 @@ fn prune_cmd(json: bool, target: Option<&str>, yes: bool, force: bool) -> Result
     let cfg = Config::load(&paths.config_file)?;
     let projects = refreshed(&paths)?;
     let all: Vec<&Project> = projects.iter().collect();
-    let assessed = assess_all(&all, cfg.stale_days)?;
+    let assessed = assess_all(&all, &cfg)?;
     let picked: Vec<(&Project, Assessment)> = match target {
         None => assessed
             .into_iter()

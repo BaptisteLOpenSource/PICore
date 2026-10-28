@@ -73,7 +73,7 @@ impl Server {
             .map_or(0, |d| d.as_secs() as i64);
         p.worktrees
             .iter()
-            .map(|wt| prune::assess(&p, wt, self.cfg.stale_days, now))
+            .map(|wt| prune::assess(&p, wt, &self.cfg, now))
             .collect()
     }
 

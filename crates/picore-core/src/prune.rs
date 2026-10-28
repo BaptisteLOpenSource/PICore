@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::git;
 use crate::model::{Project, Worktree};
@@ -40,19 +41,19 @@ pub struct Assessment {
     pub stale: bool,
 }
 
-pub fn assess(p: &Project, wt: &Worktree, stale_days: u32, now: i64) -> Result<Assessment> {
+pub fn assess(p: &Project, wt: &Worktree, cfg: &Config, now: i64) -> Result<Assessment> {
     let stale = wt
         .last_commit_at
-        .is_some_and(|t| now - t > i64::from(stale_days) * DAY);
+        .is_some_and(|t| now - t > i64::from(cfg.stale_days) * DAY);
     Ok(Assessment {
         path: wt.path.clone(),
         branch: wt.branch.clone(),
-        verdict: verdict(&p.id.0, wt)?,
+        verdict: verdict(&p.id.0, wt, &cfg.ignore_dirs)?,
         stale,
     })
 }
 
-fn verdict(repo: &Path, wt: &Worktree) -> Result<Verdict> {
+fn verdict(repo: &Path, wt: &Worktree, rebuildable: &[String]) -> Result<Verdict> {
     if wt.is_main {
         return Ok(Verdict::Kept(Blocker::Main));
     }
@@ -73,7 +74,14 @@ fn verdict(repo: &Path, wt: &Worktree) -> Result<Verdict> {
     if ignored.iter().any(|p| git::is_env_file(p)) {
         return Ok(Verdict::Kept(Blocker::EnvFile));
     }
-    if !ignored.is_empty() {
+    let blocking = ignored.iter().any(|p| {
+        let first = p
+            .strip_prefix(&wt.path)
+            .ok()
+            .and_then(|r| r.components().next());
+        !first.is_some_and(|c| rebuildable.iter().any(|d| c.as_os_str() == d.as_str()))
+    });
+    if blocking {
         return Ok(Verdict::Kept(Blocker::IgnoredFiles));
     }
     let Some(default) = git::default_branch(repo)? else {
