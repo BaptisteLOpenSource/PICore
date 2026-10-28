@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use clap::CommandFactory;
+use clap_complete::Shell;
 use picore_core::config::{Config, Paths, editor_command};
 use picore_core::discovery::suggest_roots;
 use picore_core::error::{Error, Result};
@@ -17,7 +19,7 @@ use picore_core::store::Index;
 use serde::Serialize;
 
 use crate::output::{emit, fail, mascot};
-use crate::{Cmd, RootCmd};
+use crate::{Cli, Cmd, RootCmd};
 
 pub fn run(json: bool, quiet: bool, cmd: &Cmd) -> ExitCode {
     let result = match cmd {
@@ -28,11 +30,23 @@ pub fn run(json: bool, quiet: bool, cmd: &Cmd) -> ExitCode {
         Cmd::Status { name, remote } => status(json, name.as_deref(), *remote),
         Cmd::Worktrees { name } => worktrees(json, name.as_deref()),
         Cmd::Prune { target, yes, force } => prune_cmd(json, target.as_deref(), *yes, *force),
+        Cmd::Completions { shell } => completions(*shell),
+        Cmd::Man => man(),
     };
     result.unwrap_or_else(|e| match e {
         Error::Ambiguous(candidates) => fail(json, "ambiguous", "ambiguous name", &candidates),
         e => fail(json, code_of(&e), &e.to_string(), &[]),
     })
+}
+
+fn completions(shell: Shell) -> Result<ExitCode> {
+    clap_complete::generate(shell, &mut Cli::command(), "picore", &mut io::stdout());
+    Ok(ExitCode::SUCCESS)
+}
+
+fn man() -> Result<ExitCode> {
+    clap_mangen::Man::new(Cli::command()).render(&mut io::stdout())?;
+    Ok(ExitCode::SUCCESS)
 }
 
 fn code_of(e: &Error) -> &'static str {

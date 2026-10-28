@@ -70,6 +70,13 @@ cargo install --path crates/picore-cli    # binary: picore
 cargo install --path crates/picore-mcp    # binary: picore-mcp
 ```
 
+Shell completions (bash, zsh, fish) and a man page are written to stdout:
+
+```sh
+picore completions zsh > ~/.zfunc/_picore
+picore man > picore.1
+```
+
 Config and Index live in XDG paths: `~/.config/picore/config.toml` and
 `~/.local/share/picore/picore.db`. Set `PICORE_CONFIG_DIR` and `PICORE_DATA_DIR` to override.
 

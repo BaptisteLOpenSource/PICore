@@ -44,6 +44,12 @@ pub enum Cmd {
         #[arg(long)]
         force: bool,
     },
+    #[command(hide = true)]
+    Completions {
+        shell: clap_complete::Shell,
+    },
+    #[command(hide = true)]
+    Man,
 }
 
 #[derive(Subcommand)]

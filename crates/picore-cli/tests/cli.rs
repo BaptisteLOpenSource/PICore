@@ -343,3 +343,23 @@ fn open_has_short_alias() {
     fs::write(&cfg, format!("{text}editor = \"true\"\n")).unwrap();
     assert!(sb.picore(&["--json", "o", "a"]).status.success());
 }
+
+#[test]
+fn completions_emit_script_for_each_shell() {
+    let sb = Sandbox::new();
+    for shell in ["bash", "zsh", "fish"] {
+        let out = sb.picore(&["completions", shell]);
+        assert!(out.status.success(), "{shell}");
+        let script = String::from_utf8(out.stdout).unwrap();
+        assert!(script.contains("picore"), "{shell}");
+    }
+}
+
+#[test]
+fn man_page_is_roff() {
+    let sb = Sandbox::new();
+    let out = sb.picore(&["man"]);
+    assert!(out.status.success());
+    let page = String::from_utf8(out.stdout).unwrap();
+    assert!(page.contains(".TH"));
+}
