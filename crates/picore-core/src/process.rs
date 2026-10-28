@@ -1,8 +1,9 @@
 use std::io::{self, Read};
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use thiserror::Error;
 use wait_timeout::ChildExt;
@@ -27,6 +28,7 @@ pub fn run(
     args: &[&str],
     timeout: Duration,
 ) -> Result<String, ProcError> {
+    let start = Instant::now();
     let mut child = Command::new(program)
         .args(args)
         .current_dir(cwd)
@@ -51,8 +53,10 @@ pub fn run(
         return Err(ProcError::Timeout);
     };
 
-    let stdout = join(stdout_reader)?;
-    let stderr = join(stderr_reader)?;
+    // A grandchild can hold the pipes open after the child exits: bound the reads by the deadline.
+    let deadline = start + timeout;
+    let stdout = collect(&stdout_reader, deadline)?;
+    let stderr = collect(&stderr_reader, deadline)?;
     if status.success() {
         Ok(String::from_utf8_lossy(&stdout).into_owned())
     } else {
@@ -63,17 +67,21 @@ pub fn run(
     }
 }
 
-fn drain<R: Read + Send + 'static>(mut pipe: R) -> JoinHandle<io::Result<Vec<u8>>> {
+fn drain<R: Read + Send + 'static>(mut pipe: R) -> Receiver<io::Result<Vec<u8>>> {
+    let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let mut buf = Vec::new();
-        pipe.read_to_end(&mut buf).map(|_| buf)
-    })
+        let _ = tx.send(pipe.read_to_end(&mut buf).map(|_| buf));
+    });
+    rx
 }
 
-fn join(handle: JoinHandle<io::Result<Vec<u8>>>) -> io::Result<Vec<u8>> {
-    handle
-        .join()
-        .unwrap_or_else(|_| Err(io::Error::other("pipe reader panicked")))
+fn collect(rx: &Receiver<io::Result<Vec<u8>>>, deadline: Instant) -> Result<Vec<u8>, ProcError> {
+    match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        Ok(out) => Ok(out?),
+        Err(RecvTimeoutError::Timeout) => Err(ProcError::Timeout),
+        Err(RecvTimeoutError::Disconnected) => Err(io::Error::other("pipe reader panicked").into()),
+    }
 }
 
 #[cfg(test)]
@@ -102,6 +110,21 @@ mod tests {
             Err(ProcError::Timeout)
         ));
         assert!(t.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn run_bounds_pipe_reads_when_grandchild_holds_pipes() {
+        let t = Instant::now();
+        assert!(matches!(
+            run(
+                "sh",
+                Path::new("."),
+                &["-c", "(sleep 10 &); echo hi"],
+                Duration::from_secs(1),
+            ),
+            Err(ProcError::Timeout)
+        ));
+        assert!(t.elapsed() < Duration::from_secs(3));
     }
 
     #[test]
