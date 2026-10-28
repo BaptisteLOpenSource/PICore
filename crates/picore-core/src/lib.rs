@@ -8,5 +8,6 @@ pub mod model;
 pub mod process;
 pub mod prune;
 pub mod refresh;
+pub mod resolve;
 pub mod store;
 pub mod tech;
