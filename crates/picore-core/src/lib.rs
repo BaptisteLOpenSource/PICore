@@ -1,7 +1,9 @@
 pub mod config;
 pub mod discovery;
 pub mod error;
+pub mod gh;
 pub mod git;
+pub mod health;
 pub mod model;
 pub mod process;
 pub mod refresh;
