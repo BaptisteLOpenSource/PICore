@@ -241,6 +241,45 @@ fn prune_is_dry_run_by_default() {
 }
 
 #[test]
+fn prune_dry_run_shows_reason() {
+    let sb = Sandbox::new();
+    let (merged, _dirty) = merged_and_dirty(&sb);
+    let repo = sb.path().join("code/a");
+    let gone = sb.path().join("wt/gone");
+    git(
+        &repo,
+        &["worktree", "add", "-q", "-b", "gone", s(&gone), "main"],
+    );
+    fs::remove_dir_all(&gone).unwrap();
+    add_code_root(&sb);
+
+    let out = sb.picore(&["prune"]);
+    assert!(out.status.success());
+    let text = String::from_utf8(out.stdout).unwrap();
+    let line = |path: &Path| {
+        text.lines()
+            .find(|l| l.contains(s(path)))
+            .unwrap()
+            .to_owned()
+    };
+    assert!(line(&gone).ends_with("Prunable(Missing)"), "{text}");
+    assert!(line(&merged).ends_with("Prunable(Merged)"), "{text}");
+
+    let out = sb.picore(&["--json", "prune"]);
+    let rows = json(&out)["data"]["pruned"].clone();
+    let verdict = |path: &Path| {
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["path"] == s(path))
+            .unwrap()["verdict"]
+            .clone()
+    };
+    assert_eq!(verdict(&gone), serde_json::json!({"Prunable": "Missing"}));
+    assert_eq!(verdict(&merged), serde_json::json!({"Prunable": "Merged"}));
+}
+
+#[test]
 fn prune_yes_removes_merged_only() {
     let sb = Sandbox::new();
     let (merged, dirty) = merged_and_dirty(&sb);

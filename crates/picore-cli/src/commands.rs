@@ -344,6 +344,15 @@ struct WorktreeRow<'a> {
     assessment: &'a Assessment,
 }
 
+fn print_row(r: &WorktreeRow) {
+    println!(
+        "{}\t{}\t{:?}",
+        r.project,
+        r.assessment.path.display(),
+        r.assessment.verdict
+    );
+}
+
 fn worktrees(json: bool, name: Option<&str>) -> Result<ExitCode> {
     let paths = Paths::from_env()?;
     let cfg = Config::load(&paths.config_file)?;
@@ -362,12 +371,7 @@ fn worktrees(json: bool, name: Option<&str>) -> Result<ExitCode> {
         .collect();
     emit(json, &rows, |rows| {
         for r in rows {
-            println!(
-                "{}\t{}\t{:?}",
-                r.project,
-                r.assessment.path.display(),
-                r.assessment.verdict
-            );
+            print_row(r);
         }
     });
     Ok(ExitCode::SUCCESS)
@@ -438,7 +442,7 @@ fn prune_cmd(json: bool, target: Option<&str>, yes: bool, force: bool) -> Result
             println!("dry run: nothing removed (use --yes)");
         }
         for row in &r.pruned {
-            println!("{}\t{}", row.project, row.assessment.path.display());
+            print_row(row);
         }
     });
     Ok(ExitCode::SUCCESS)
