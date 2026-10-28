@@ -170,7 +170,9 @@ pub fn safe_read(root: &Path, file: &str) -> Result<Option<String>> {
     let root = root.canonicalize()?;
     // Canonicalize first: a symlink named README.md must not escape the root.
     match root.join(file).canonicalize() {
-        Ok(path) if path.starts_with(&root) => Ok(Some(fs::read_to_string(path)?)),
+        Ok(path) if path.starts_with(&root) => {
+            Ok(Some(String::from_utf8_lossy(&fs::read(path)?).into_owned()))
+        }
         Ok(_) => Err(Error::Config("outside project".to_owned())),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e.into()),
@@ -203,6 +205,9 @@ pub fn context(p: &Project) -> Result<ProjectContext> {
 }
 
 pub fn section(p: &Project, file: &str, heading: &str) -> Result<Section> {
+    if !WHITELIST.contains(&file) {
+        return Err(Error::Config("not whitelisted".to_owned()));
+    }
     let root = p
         .work_tree
         .as_deref()

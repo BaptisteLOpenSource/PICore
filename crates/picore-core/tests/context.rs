@@ -46,3 +46,23 @@ fn bare_project_has_no_files() {
     assert!(context(&p).unwrap().files.is_empty());
     assert!(section(&p, "README.md", "Install").is_err());
 }
+
+#[test]
+fn non_utf8_file_is_lossy_not_fatal() {
+    let r = TestRepo::new();
+    fs::write(r.path().join("README.md"), [0xff, 0xfe, b'#', b' ', b'A']).unwrap();
+    let p = scan(&ProjectId(r.path().join(".git").canonicalize().unwrap())).unwrap();
+    let ctx = context(&p).unwrap();
+    assert_eq!(ctx.files.len(), 1);
+    assert_eq!(ctx.files[0].file, "README.md");
+}
+
+#[test]
+fn bare_section_non_whitelisted_is_config_error() {
+    let r = TestRepo::bare_with_worktree();
+    let p = scan(&ProjectId(r.path().to_path_buf())).unwrap();
+    assert!(matches!(
+        section(&p, ".env", "Install"),
+        Err(picore_core::error::Error::Config(_))
+    ));
+}
