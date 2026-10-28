@@ -163,3 +163,16 @@ fn prune_drops_worktree_whose_directory_vanished() {
     git::prune_worktrees(r.path()).unwrap();
     assert_eq!(git::worktrees(r.path()).unwrap().len(), 1);
 }
+
+#[test]
+fn repo_local_uploadpack_is_not_run() {
+    let r = TestRepo::new();
+    let marker = r.tmp().join("marker");
+    let hook = r.tmp().join("pack.sh");
+    fs::write(&hook, format!("#!/bin/sh\ntouch {}\n", marker.display())).unwrap();
+    fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    r.run(&["remote", "add", "origin", r.path().to_str().unwrap()]);
+    r.run(&["config", "remote.origin.uploadpack", hook.to_str().unwrap()]);
+    assert!(git::ls_remote(r.path()).is_err());
+    assert!(!marker.exists());
+}

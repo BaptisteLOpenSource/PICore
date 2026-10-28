@@ -210,7 +210,14 @@ pub fn ls_remote(work_tree: &Path) -> Result<()> {
         .unwrap_or_else(|| "ssh".to_owned());
         Some(format!("core.sshCommand={base} -o BatchMode=yes"))
     };
-    let mut config = vec!["protocol.ext.allow=never"];
+    // Repo-local config can name programs (uploadpack, gitProxy, file/ext transports).
+    let mut config = vec![
+        "protocol.allow=never",
+        "protocol.https.allow=always",
+        "protocol.ssh.allow=always",
+        "remote.origin.uploadpack=git-upload-pack",
+        "core.gitProxy=",
+    ];
     config.extend(ssh.as_deref());
     git_with(work_tree, &config, &["ls-remote", "--heads", "origin"]).map(|_| ())
 }
