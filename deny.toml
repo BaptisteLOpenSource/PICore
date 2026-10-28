@@ -1,0 +1,16 @@
+[advisories]
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "MPL-2.0", # option-ext, pulled by directories
+    "Unicode-3.0",
+    "Zlib", # foldhash
+]
+
+[bans]
+multiple-versions = "warn" # syn 2 and 3 coexist
