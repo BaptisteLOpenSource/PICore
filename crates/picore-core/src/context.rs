@@ -32,6 +32,7 @@ pub struct FileOutline {
 #[derive(Debug, Serialize)]
 pub struct ProjectContext {
     pub name: String,
+    pub product: Option<String>,
     pub branch: Option<String>,
     pub techs: Vec<String>,
     pub worktrees: Vec<Worktree>,
@@ -200,6 +201,7 @@ pub fn context(p: &Project) -> Result<ProjectContext> {
     }
     Ok(ProjectContext {
         name: p.name.clone(),
+        product: None,
         branch: p.branch.clone(),
         techs: p.techs.clone(),
         worktrees: p.worktrees.clone(),

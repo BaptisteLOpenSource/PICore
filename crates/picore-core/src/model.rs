@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ProjectId(pub PathBuf);
 
-pub(crate) fn project_dir(id: &ProjectId) -> &Path {
+pub fn project_dir(id: &ProjectId) -> &Path {
     match id.0.file_name() {
         Some(n) if n == ".git" || n == ".bare" => id.0.parent().unwrap_or(&id.0),
         _ => &id.0,

@@ -11,7 +11,7 @@ use picore_core::config::{Config, Paths, editor_command};
 use picore_core::discovery::suggest_roots;
 use picore_core::error::{Error, Result};
 use picore_core::health::{Check, ProjectHealth, machine_health, project_health};
-use picore_core::model::Project;
+use picore_core::model::{Project, project_dir};
 use picore_core::prune::{self, Assessment, Blocker, Verdict};
 use picore_core::refresh::{index_all, refresh_all};
 use picore_core::resolve::{Resolution, qualified, resolve};
@@ -144,46 +144,71 @@ fn refreshed(paths: &Paths) -> Result<Vec<Project>> {
     Ok(projects)
 }
 
+#[derive(Serialize)]
+struct Listed<'a> {
+    #[serde(flatten)]
+    project: &'a Project,
+    product: Option<&'a str>,
+}
+
 fn list(json: bool) -> Result<ExitCode> {
     let paths = Paths::from_env()?;
+    // bad config must not hide the list: drop products, keep going
+    let cfg = Config::load(&paths.config_file).unwrap_or_else(|e| {
+        eprintln!("warn: {e}: products hidden");
+        Config::default()
+    });
     let projects = refreshed(&paths)?;
     if projects.is_empty() {
         eprintln!("no projects indexed: run `picore index`");
     }
-    emit(json, &projects, |p| print_table(p));
+    let listed: Vec<Listed> = projects
+        .iter()
+        .map(|p| Listed {
+            project: p,
+            product: cfg.product_of(project_dir(&p.id)),
+        })
+        .collect();
+    emit(json, &listed, |l| print_table(l));
     Ok(ExitCode::SUCCESS)
 }
 
-fn print_table(projects: &[Project]) {
-    if projects.is_empty() {
+fn print_table(listed: &[Listed]) {
+    if listed.is_empty() {
         return;
     }
-    let mut rows = vec![["NAME", "BRANCH", "WT", "TECHS", "PATH"].map(String::from)];
-    rows.extend(projects.iter().map(|p| {
-        [
-            p.name.clone(),
-            p.branch.clone().unwrap_or_else(|| "-".into()),
-            p.linked_worktrees().count().to_string(),
-            if p.techs.is_empty() {
-                "-".into()
-            } else {
-                p.techs.join(",")
-            },
-            p.work_tree
-                .as_deref()
-                .unwrap_or(&p.id.0)
-                .display()
-                .to_string(),
-        ]
-    }));
-    let widths: [usize; 5] =
+    let mut rows = vec![["NAME", "PRODUCT", "BRANCH", "WT", "TECHS", "PATH"].map(String::from)];
+    rows.extend(listed.iter().map(
+        |&Listed {
+             project: p,
+             product,
+         }| {
+            [
+                p.name.clone(),
+                product.unwrap_or("-").into(),
+                p.branch.clone().unwrap_or_else(|| "-".into()),
+                p.linked_worktrees().count().to_string(),
+                if p.techs.is_empty() {
+                    "-".into()
+                } else {
+                    p.techs.join(",")
+                },
+                p.work_tree
+                    .as_deref()
+                    .unwrap_or(&p.id.0)
+                    .display()
+                    .to_string(),
+            ]
+        },
+    ));
+    let widths: [usize; 6] =
         std::array::from_fn(|c| rows.iter().map(|r| r[c].chars().count()).max().unwrap_or(0));
     for row in rows {
         let line: Vec<String> = row
             .iter()
             .enumerate()
             .map(|(c, cell)| {
-                if c == 4 {
+                if c == 5 {
                     cell.clone()
                 } else {
                     format!("{cell:<w$}", w = widths[c])
@@ -202,7 +227,11 @@ struct OpenReport<'a> {
 
 fn open(json: bool, name: &str) -> Result<ExitCode> {
     let paths = Paths::from_env()?;
-    let cfg = Config::load(&paths.config_file)?;
+    // bad config must not hide the list: drop products, keep going
+    let cfg = Config::load(&paths.config_file).unwrap_or_else(|e| {
+        eprintln!("warn: {e}: products hidden");
+        Config::default()
+    });
     let projects = refreshed(&paths)?;
     let project = match resolve(&projects, name) {
         Resolution::Many(hits) if !json && io::stdin().is_terminal() => pick(hits)?,
@@ -369,7 +398,11 @@ fn print_row(r: &WorktreeRow) {
 
 fn worktrees(json: bool, name: Option<&str>) -> Result<ExitCode> {
     let paths = Paths::from_env()?;
-    let cfg = Config::load(&paths.config_file)?;
+    // bad config must not hide the list: drop products, keep going
+    let cfg = Config::load(&paths.config_file).unwrap_or_else(|e| {
+        eprintln!("warn: {e}: products hidden");
+        Config::default()
+    });
     let projects = refreshed(&paths)?;
     let selected: Vec<&Project> = match name {
         Some(q) => vec![one(resolve(&projects, q), q)?],
@@ -399,7 +432,11 @@ struct PruneReport<'a> {
 
 fn prune_cmd(json: bool, target: Option<&str>, yes: bool, force: bool) -> Result<ExitCode> {
     let paths = Paths::from_env()?;
-    let cfg = Config::load(&paths.config_file)?;
+    // bad config must not hide the list: drop products, keep going
+    let cfg = Config::load(&paths.config_file).unwrap_or_else(|e| {
+        eprintln!("warn: {e}: products hidden");
+        Config::default()
+    });
     let projects = refreshed(&paths)?;
     let all: Vec<&Project> = projects.iter().collect();
     let assessed = assess_all(&all, &cfg)?;

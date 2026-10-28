@@ -93,8 +93,8 @@ picore root add ~/Documents/Git
 picore index
 # indexed 9 projects: 9 updated, 0 removed
 picore list
-# NAME             BRANCH         WT  TECHS                             PATH
-# PICore           dev            14  -                                 ~/Documents/Git/Config/PICore
+# NAME             PRODUCT  BRANCH         WT  TECHS                             PATH
+# PICore           -        dev            14  -                                 ~/Documents/Git/Config/PICore
 picore status
 # git: Ok git version 2.56.0
 # ssh-agent: Ok agent has keys
