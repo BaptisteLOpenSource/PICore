@@ -39,6 +39,8 @@ fn project_dirs() -> Result<ProjectDirs> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Product {
     pub path: PathBuf,
+    #[serde(skip)]
+    resolved: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -81,13 +83,13 @@ impl Config {
     }
 
     fn resolve_products(&mut self) -> Result<()> {
-        for product in self.products.values_mut() {
-            product.path = resolve_product_path(&product.path)?;
+        for (name, product) in self.products.iter_mut() {
+            product.resolved = resolve_product_path(name, &product.path)?;
         }
         let products: Vec<(&String, &PathBuf)> = self
             .products
             .iter()
-            .map(|(name, p)| (name, &p.path))
+            .map(|(name, p)| (name, &p.resolved))
             .collect();
         for (i, (a, pa)) in products.iter().enumerate() {
             for (b, pb) in &products[i + 1..] {
@@ -102,7 +104,7 @@ impl Config {
     pub fn product_of(&self, dir: &Path) -> Option<&str> {
         self.products
             .iter()
-            .find(|(_, p)| dir.starts_with(&p.path))
+            .find(|(_, p)| dir.starts_with(&p.resolved))
             .map(|(name, _)| name.as_str())
     }
 
@@ -132,7 +134,7 @@ impl Config {
     }
 }
 
-fn resolve_product_path(path: &Path) -> Result<PathBuf> {
+fn resolve_product_path(name: &str, path: &Path) -> Result<PathBuf> {
     let expanded = match path.strip_prefix("~") {
         Ok(rest) => {
             let home = BaseDirs::new().ok_or_else(|| Error::Config("no home directory".into()))?;
@@ -140,6 +142,11 @@ fn resolve_product_path(path: &Path) -> Result<PathBuf> {
         }
         Err(_) => path.to_path_buf(),
     };
+    if !expanded.is_absolute() {
+        return Err(Error::Config(format!(
+            "product {name}: path must be absolute or start with ~/"
+        )));
+    }
     Ok(expanded.canonicalize().unwrap_or(expanded))
 }
 
@@ -236,7 +243,7 @@ mod tests {
             ),
         );
         assert!(
-            matches!(Config::load(&f), Err(Error::Config(m)) if m.starts_with("product folders nest: "))
+            matches!(Config::load(&f), Err(Error::Config(m)) if m.starts_with("product folders nest: ") && m.contains("outer") && m.contains("inner"))
         );
     }
 
@@ -249,7 +256,29 @@ mod tests {
         );
         let home = BaseDirs::new().unwrap().home_dir().to_path_buf();
         let c = Config::load(&f).unwrap();
-        assert_eq!(c.products["p"].path, home.join("picore-missing-product"));
+        assert_eq!(
+            c.product_of(&home.join("picore-missing-product")),
+            Some("p")
+        );
+    }
+
+    #[test]
+    fn save_keeps_user_product_path() {
+        let d = tempfile::tempdir().unwrap();
+        let f = write_config(d.path(), "[products.p]\npath = \"~/x\"\n");
+        Config::load(&f).unwrap().save(&f).unwrap();
+        assert!(fs::read_to_string(&f).unwrap().contains("\"~/x\""));
+    }
+
+    #[test]
+    fn empty_or_relative_product_path_is_rejected() {
+        let d = tempfile::tempdir().unwrap();
+        for bad in ["", "rel/dir"] {
+            let f = write_config(d.path(), &format!("[products.p]\npath = \"{bad}\"\n"));
+            assert!(
+                matches!(Config::load(&f), Err(Error::Config(m)) if m.contains("product p: path must be absolute"))
+            );
+        }
     }
 
     #[test]
