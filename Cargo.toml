@@ -11,4 +11,5 @@ license = "MIT"
 clap = { version = "4", features = ["derive"] }
 rusqlite = { version = "0.41", features = ["bundled"] }
 thiserror = "2"
+tempfile = "3"
 wait-timeout = "0.2"
