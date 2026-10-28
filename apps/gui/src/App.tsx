@@ -8,7 +8,7 @@ import type { Status } from "./types";
 const chip: Record<Status, string> = {
   ok: "border-success text-success",
   ko: "border-alert text-alert",
-  unknown: "border-slate-800 text-muted",
+  unknown: "border-muted/30 text-muted",
 };
 
 export function App() {

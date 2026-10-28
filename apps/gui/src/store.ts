@@ -42,7 +42,10 @@ export async function refresh(discover: boolean) {
   inFlight++;
   setRefreshing(true);
   try {
-    setOverview(await api.overview(discover));
+    const next = await api.overview(discover);
+    const selected = selectedId();
+    if (selected && !next.projects.some((p) => p.id === selected)) setSelectedId(null);
+    setOverview(next);
     setError(null);
   } catch (e) {
     setError(String(e));

@@ -70,7 +70,7 @@ export function Detail() {
     <section aria-label="Detail" class="min-w-0">
       <Show when={selectedId()} fallback={<p class="text-sm text-muted">Select a project.</p>}>
         <Show
-          when={detail()}
+          when={!detail.error && detail()}
           fallback={<p class="text-sm text-muted">{detail.error ? String(detail.error) : "Loading..."}</p>}
         >
           {(data) => <Info data={data()} />}

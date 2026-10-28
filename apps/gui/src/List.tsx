@@ -19,7 +19,7 @@ function Row(props: { project: Listed }) {
       type="button"
       aria-pressed={selectedId() === props.project.id}
       onClick={() => setSelectedId(props.project.id)}
-      class="flex w-full items-center justify-between gap-2 rounded border border-slate-800 bg-surface px-3 py-2 text-left hover:border-active aria-[pressed=true]:border-active"
+      class="flex w-full items-center justify-between gap-2 rounded border border-muted/30 bg-surface px-3 py-2 text-left hover:border-active aria-[pressed=true]:border-active"
     >
       <span class="min-w-0 truncate">{props.project.name}</span>
       <span class="flex shrink-0 items-center gap-2 text-xs">

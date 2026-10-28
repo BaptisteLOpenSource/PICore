@@ -18,14 +18,14 @@ export function ProductForm() {
   }
 
   return (
-    <form onSubmit={submit} class="flex flex-col gap-2 border-t border-slate-800 pt-4">
+    <form onSubmit={submit} class="flex flex-col gap-2 border-t border-muted/30 pt-4">
       <h2 class="font-semibold">New product</h2>
       <label class="flex flex-col gap-1 text-sm text-muted">
         Name
         <input
           value={name()}
           onInput={(e) => setName(e.currentTarget.value)}
-          class="rounded border border-slate-800 bg-surface px-2 py-1 text-text"
+          class="rounded border border-muted/30 bg-surface px-2 py-1 text-text"
         />
       </label>
       <div class="flex min-w-0 items-center gap-2">
