@@ -9,7 +9,11 @@ license = "MIT"
 
 [workspace.dependencies]
 clap = { version = "4", features = ["derive"] }
+directories = "6"
 rusqlite = { version = "0.41", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+shell-words = "1"
 thiserror = "2"
 tempfile = "3"
+toml = "0.8"
 wait-timeout = "0.2"
