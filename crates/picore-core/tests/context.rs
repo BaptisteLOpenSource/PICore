@@ -66,3 +66,32 @@ fn bare_section_non_whitelisted_is_config_error() {
         Err(picore_core::error::Error::Config(_))
     ));
 }
+
+#[test]
+fn in_root_symlink_to_other_file_refused() {
+    let r = TestRepo::new();
+    r.write(".env", "TOKEN=1");
+    fs::remove_file(r.path().join("README.md")).unwrap();
+    std::os::unix::fs::symlink(".env", r.path().join("README.md")).unwrap();
+    assert!(safe_read(r.path(), "README.md").is_err());
+}
+
+#[test]
+fn fifo_refused_without_blocking() {
+    let r = TestRepo::new();
+    fs::remove_file(r.path().join("README.md")).unwrap();
+    let ok = std::process::Command::new("mkfifo")
+        .arg(r.path().join("README.md"))
+        .status()
+        .unwrap();
+    assert!(ok.success());
+    assert!(safe_read(r.path(), "README.md").is_err());
+}
+
+#[test]
+fn read_capped_at_one_mib() {
+    let r = TestRepo::new();
+    r.write("README.md", &"x".repeat(2 << 20));
+    let md = safe_read(r.path(), "README.md").unwrap().unwrap();
+    assert_eq!(md.len(), 1 << 20);
+}

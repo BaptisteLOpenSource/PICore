@@ -48,7 +48,49 @@ fn env_file_detected_when_ignored() {
     r.write(".gitignore", ".env*\n");
     r.commit("ignore");
     r.write(".env.local", "K=V");
-    assert_eq!(git::ignored_env_files(r.path()).unwrap().len(), 1);
+    let ignored = git::ignored_files(r.path()).unwrap();
+    assert_eq!(ignored.len(), 1);
+    assert!(git::is_env_file(&ignored[0]));
+}
+
+#[test]
+fn default_branch_falls_back_to_origin_when_local_missing() {
+    let r = TestRepo::new();
+    r.run(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    r.run(&[
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/main",
+    ]);
+    let sha = r.run(&["rev-parse", "HEAD"]);
+    r.run(&["symbolic-ref", "HEAD", "refs/heads/work"]);
+    r.run(&["update-ref", "refs/heads/work", sha.trim()]);
+    r.run(&["update-ref", "-d", "refs/heads/main"]);
+    r.write("next.txt", "x");
+    r.commit("next");
+    let default = git::default_branch(r.path()).unwrap().unwrap();
+    assert_eq!(default, "origin/main");
+    assert!(!git::is_strict_ancestor(r.path(), "work", &default).unwrap());
+    assert!(git::is_strict_ancestor(r.path(), "origin/main", "work").unwrap());
+}
+
+#[test]
+fn fsmonitor_in_repo_config_is_not_run() {
+    let r = TestRepo::new();
+    let marker = r.tmp().join("marker");
+    let hook = r.tmp().join("fsm.sh");
+    fs::write(&hook, format!("#!/bin/sh\ntouch {}\n", marker.display())).unwrap();
+    r.run(&["config", "core.fsmonitor", hook.to_str().unwrap()]);
+    fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    git::status(r.path()).unwrap();
+    git::ignored_files(r.path()).unwrap();
+    assert!(!marker.exists());
+}
+
+#[test]
+fn rev_starting_with_dash_is_not_an_option() {
+    let r = TestRepo::new();
+    assert!(git::is_strict_ancestor(r.path(), "main", "--help").is_err());
 }
 
 #[test]

@@ -1,5 +1,5 @@
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::path::Path;
 
 use serde::Serialize;
@@ -12,6 +12,7 @@ pub const WHITELIST: [&str; 3] = ["README.md", "CLAUDE.md", "AGENTS.md"];
 const INTRO_MAX: usize = 2048;
 const OUTLINE_MAX: usize = 100;
 const SECTION_MAX: usize = 16384;
+const FILE_MAX: u64 = 1 << 20;
 
 #[derive(Debug, Serialize)]
 pub struct Heading {
@@ -167,13 +168,15 @@ pub fn safe_read(root: &Path, file: &str) -> Result<Option<String>> {
     if !WHITELIST.contains(&file) {
         return Err(Error::Config("not whitelisted".to_owned()));
     }
-    let root = root.canonicalize()?;
-    // Canonicalize first: a symlink named README.md must not escape the root.
-    match root.join(file).canonicalize() {
-        Ok(path) if path.starts_with(&root) => {
-            Ok(Some(String::from_utf8_lossy(&fs::read(path)?).into_owned()))
+    let path = root.join(file);
+    // Symlinks (even in-root ones like README.md -> .env) and FIFOs are refused.
+    match fs::symlink_metadata(&path) {
+        Ok(m) if m.is_file() => {
+            let mut buf = Vec::new();
+            fs::File::open(path)?.take(FILE_MAX).read_to_end(&mut buf)?;
+            Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
         }
-        Ok(_) => Err(Error::Config("outside project".to_owned())),
+        Ok(_) => Err(Error::Config("not a regular file".to_owned())),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e.into()),
     }

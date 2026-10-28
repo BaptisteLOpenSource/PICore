@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use picore_core::config::Config;
 use picore_core::model::ProjectId;
-use picore_core::refresh::{Outcome, index_all, refresh, stamp};
+use picore_core::refresh::{Outcome, index_all, refresh, refresh_all, scan, stamp};
 use picore_core::store::Index;
 use support::TestRepo;
 use tempfile::TempDir;
@@ -174,4 +174,76 @@ fn refresh_stores_techs_of_main_work_tree() {
 
     let project = index.get(&repo_id(&r)).unwrap().unwrap();
     assert_eq!(project.techs, ["rust", "tauri"]);
+}
+
+#[test]
+fn index_all_skips_failing_project_and_reports_it() {
+    let good = TestRepo::new();
+    let bad = TestRepo::new();
+    for entry in fs::read_dir(bad.path().join(".git/objects")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.file_name().unwrap().len() == 2 {
+            fs::remove_dir_all(path).unwrap();
+        }
+    }
+    let db = TempDir::new().unwrap();
+    let index = open(&db);
+    let cfg = Config {
+        roots: vec![good.tmp().to_path_buf(), bad.tmp().to_path_buf()],
+        ..Config::default()
+    };
+
+    let report = index_all(&index, &cfg).unwrap();
+    assert_eq!((report.found, report.updated), (2, 1));
+    assert_eq!(report.failed.len(), 1);
+    assert_eq!(report.failed[0].id, repo_id(&bad));
+    assert!(index.get(&repo_id(&good)).unwrap().is_some());
+}
+
+#[test]
+fn refresh_all_sees_new_worktree() {
+    let r = TestRepo::new();
+    let db = TempDir::new().unwrap();
+    let index = open(&db);
+    refresh(&index, &repo_id(&r)).unwrap();
+    thread::sleep(Duration::from_millis(10));
+    r.add_worktree(&r.tmp().join("wt"), "feat");
+    let (projects, failed) = refresh_all(&index).unwrap();
+    assert!(failed.is_empty());
+    assert_eq!(projects[0].linked_worktrees().count(), 1);
+}
+
+#[test]
+fn index_find_matches_git_dir_or_work_tree() {
+    let r = TestRepo::new();
+    let db = TempDir::new().unwrap();
+    let index = open(&db);
+    let id = repo_id(&r);
+    refresh(&index, &id).unwrap();
+    assert_eq!(index.find(&id.0).unwrap().unwrap().id, id);
+    assert_eq!(index.find(r.path()).unwrap().unwrap().id, id);
+    assert!(index.find(r.tmp()).unwrap().is_none());
+}
+
+#[test]
+fn projects_sharing_a_worktree_path_both_index_and_old_schema_resets() {
+    let r = TestRepo::new();
+    let db = TempDir::new().unwrap();
+    let path = db.path().join("picore.db");
+    let old = rusqlite::Connection::open(&path).unwrap();
+    old.execute_batch(
+        "CREATE TABLE project(id TEXT PRIMARY KEY, name TEXT NOT NULL, work_tree TEXT, branch TEXT, techs TEXT NOT NULL, stamp INTEGER NOT NULL);
+         CREATE TABLE worktree(path TEXT PRIMARY KEY, project_id TEXT NOT NULL, branch TEXT, head TEXT, is_main INTEGER NOT NULL, detached INTEGER NOT NULL, locked INTEGER NOT NULL, last_commit_at INTEGER);
+         PRAGMA user_version = 1;",
+    )
+    .unwrap();
+    drop(old);
+
+    let index = Index::open(&path).unwrap();
+    let a = scan(&repo_id(&r)).unwrap();
+    let mut b = a.clone();
+    b.id = ProjectId(db.path().join("copy/.git"));
+    index.upsert(&a).unwrap();
+    index.upsert(&b).unwrap();
+    assert_eq!(index.all().unwrap().len(), 2);
 }

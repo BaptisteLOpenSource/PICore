@@ -27,6 +27,7 @@ pub enum Blocker {
     Locked,
     Changes(u32),
     EnvFile,
+    IgnoredFiles,
     NotMerged,
     NoDefaultBranch,
 }
@@ -68,8 +69,12 @@ fn verdict(repo: &Path, wt: &Worktree) -> Result<Verdict> {
     if changes > 0 {
         return Ok(Verdict::Kept(Blocker::Changes(changes)));
     }
-    if !git::ignored_env_files(&wt.path)?.is_empty() {
+    let ignored = git::ignored_files(&wt.path)?;
+    if ignored.iter().any(|p| git::is_env_file(p)) {
         return Ok(Verdict::Kept(Blocker::EnvFile));
+    }
+    if !ignored.is_empty() {
+        return Ok(Verdict::Kept(Blocker::IgnoredFiles));
     }
     let Some(default) = git::default_branch(repo)? else {
         return Ok(Verdict::Kept(Blocker::NoDefaultBranch));

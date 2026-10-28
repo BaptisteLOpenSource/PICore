@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::config::Config;
 use crate::discovery::discover;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::git;
 use crate::model::{Project, ProjectId, Worktree, project_name};
 use crate::store::Index;
@@ -26,6 +26,13 @@ pub struct IndexReport {
     pub found: usize,
     pub updated: usize,
     pub removed: usize,
+    pub failed: Vec<Failure>,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct Failure {
+    pub id: ProjectId,
+    pub error: String,
 }
 
 enum Step {
@@ -129,17 +136,32 @@ pub fn refresh_many(index: &Index, ids: &[ProjectId]) -> Vec<(ProjectId, Result<
         .collect()
 }
 
+pub type RefreshFailures = Vec<(ProjectId, Error)>;
+
+pub fn refresh_all(index: &Index) -> Result<(Vec<Project>, RefreshFailures)> {
+    let ids: Vec<ProjectId> = index.all()?.into_iter().map(|p| p.id).collect();
+    let failed = refresh_many(index, &ids)
+        .into_iter()
+        .filter_map(|(id, outcome)| outcome.err().map(|e| (id, e)))
+        .collect();
+    Ok((index.all()?, failed))
+}
+
 pub fn index_all(index: &Index, cfg: &Config) -> Result<IndexReport> {
     let ids = discover(&cfg.roots, cfg.max_depth, &cfg.ignore_dirs)?;
     let mut report = IndexReport {
         found: ids.len(),
         ..IndexReport::default()
     };
-    for (_, outcome) in refresh_many(index, &ids) {
-        match outcome? {
-            Outcome::Updated => report.updated += 1,
-            Outcome::Gone => report.removed += 1,
-            Outcome::Fresh => {}
+    for (id, outcome) in refresh_many(index, &ids) {
+        match outcome {
+            Ok(Outcome::Updated) => report.updated += 1,
+            Ok(Outcome::Gone) => report.removed += 1,
+            Ok(Outcome::Fresh) => {}
+            Err(e) => report.failed.push(Failure {
+                id,
+                error: e.to_string(),
+            }),
         }
     }
     report.removed += index.retain(&ids)?;

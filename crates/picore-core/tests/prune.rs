@@ -139,3 +139,18 @@ fn stale_flag_uses_stale_days() {
     assert!(assess(&p, w, 30, last + 31 * DAY).unwrap().stale);
     assert!(!assess(&p, w, 30, last + 29 * DAY).unwrap().stale);
 }
+
+#[test]
+fn merged_with_ignored_files_is_kept() {
+    let r = TestRepo::new();
+    r.write(".gitignore", "*.key\n");
+    r.commit("ignore");
+    let wt = r.tmp().join("wt");
+    r.add_worktree(&wt, "feat");
+    r.write("next.txt", "x");
+    r.commit("next");
+    fs::write(wt.join("secret.key"), "k").unwrap();
+    let p = project(&r);
+    let a = assess(&p, linked(&p), 30, now()).unwrap();
+    assert_eq!(a.verdict, Verdict::Kept(Blocker::IgnoredFiles));
+}
