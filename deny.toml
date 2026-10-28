@@ -1,4 +1,7 @@
 [advisories]
+ignore = [
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained, compile-time only via gtk3-rs glib-macros 0.18 (tauri linux), no upgrade until tauri moves to gtk4" },
+]
 
 [licenses]
 allow = [
