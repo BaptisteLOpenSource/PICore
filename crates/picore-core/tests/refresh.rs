@@ -160,3 +160,18 @@ fn missing_worktree_dir_still_indexes() {
         None
     );
 }
+
+#[test]
+fn refresh_stores_techs_of_main_work_tree() {
+    let r = TestRepo::new();
+    let db = TempDir::new().unwrap();
+    let index = open(&db);
+    r.write(
+        "Cargo.toml",
+        "[package]\nname = \"x\"\n\n[dependencies]\ntauri = \"2\"\n",
+    );
+    refresh(&index, &repo_id(&r)).unwrap();
+
+    let project = index.get(&repo_id(&r)).unwrap().unwrap();
+    assert_eq!(project.techs, ["rust", "tauri"]);
+}

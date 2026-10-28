@@ -6,3 +6,4 @@ pub mod model;
 pub mod process;
 pub mod refresh;
 pub mod store;
+pub mod tech;
