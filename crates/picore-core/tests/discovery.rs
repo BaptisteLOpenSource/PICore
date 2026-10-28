@@ -17,7 +17,7 @@ fn init(dir: &Path) {
 }
 
 fn found(roots: &[PathBuf], max_depth: usize) -> Vec<ProjectId> {
-    discover(roots, max_depth, &Config::default().ignore_dirs)
+    discover(roots, max_depth, &Config::default().ignore_dirs).unwrap()
 }
 
 #[test]

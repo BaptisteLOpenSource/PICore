@@ -10,3 +10,9 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
+picore-core = { path = "../picore-core" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
