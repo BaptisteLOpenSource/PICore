@@ -134,3 +134,157 @@ fn index_without_git_fails_cleanly() {
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(json(&out)["error"]["code"], "git");
 }
+
+fn git(dir: &Path, args: &[&str]) -> String {
+    process::run("git", dir, args, TIMEOUT).unwrap()
+}
+
+// Plumbing only: `git commit` would run the global hooks, which reject commits on main.
+fn commit(repo: &Path, msg: &str) {
+    fs::write(repo.join("f.txt"), msg).unwrap();
+    git(repo, &["add", "-A"]);
+    let tree = git(repo, &["write-tree"]);
+    let parent = process::run(
+        "git",
+        repo,
+        &["rev-parse", "--verify", "-q", "HEAD"],
+        TIMEOUT,
+    )
+    .ok()
+    .map(|p| p.trim().to_owned());
+    let mut args = vec![
+        "-c",
+        "user.name=PICore Test",
+        "-c",
+        "user.email=test@picore.invalid",
+        "commit-tree",
+        tree.trim(),
+        "-m",
+        msg,
+    ];
+    if let Some(p) = parent.as_deref() {
+        args.extend(["-p", p]);
+    }
+    let sha = git(repo, &args).trim().to_owned();
+    git(repo, &["update-ref", "HEAD", &sha]);
+}
+
+// `merged` is an ancestor of main (prunable), `dirty` has an untracked file (kept).
+fn merged_and_dirty(sb: &Sandbox) -> (PathBuf, PathBuf) {
+    let repo = sb.repo("code/a");
+    commit(&repo, "one");
+    let merged = sb.path().join("wt/merged");
+    let dirty = sb.path().join("wt/dirty");
+    git(
+        &repo,
+        &["worktree", "add", "-q", "-b", "merged", s(&merged), "main"],
+    );
+    git(
+        &repo,
+        &["worktree", "add", "-q", "-b", "dirty", s(&dirty), "main"],
+    );
+    fs::write(dirty.join("wip.txt"), "x").unwrap();
+    commit(&repo, "two");
+    (merged, dirty)
+}
+
+fn add_code_root(sb: &Sandbox) {
+    assert!(
+        sb.picore(&["root", "add", s(&sb.path().join("code"))])
+            .status
+            .success()
+    );
+    assert!(sb.picore(&["index"]).status.success());
+}
+
+#[test]
+fn open_ambiguous_non_tty_lists_candidates() {
+    let sb = Sandbox::new();
+    sb.repo("code/c1/api");
+    sb.repo("code/c2/api");
+    add_code_root(&sb);
+
+    let out = sb.picore(&["--json", "open", "api"]);
+    assert_eq!(out.status.code(), Some(3));
+    let v = json(&out);
+    assert_eq!(v["error"]["code"], "ambiguous");
+    assert_eq!(
+        v["error"]["candidates"],
+        serde_json::json!(["c1/api", "c2/api"])
+    );
+}
+
+#[test]
+fn open_json_uses_editor_config() {
+    let sb = Sandbox::new();
+    sb.repo("code/a");
+    add_code_root(&sb);
+    let cfg = sb.path().join("config/config.toml");
+    let text = fs::read_to_string(&cfg).unwrap();
+    fs::write(&cfg, format!("{text}editor = \"true\"\n")).unwrap();
+
+    let out = sb.picore(&["--json", "open", "a"]);
+    assert!(out.status.success());
+    assert_eq!(json(&out)["data"]["editor"], serde_json::json!(["true"]));
+}
+
+#[test]
+fn prune_is_dry_run_by_default() {
+    let sb = Sandbox::new();
+    let (merged, _dirty) = merged_and_dirty(&sb);
+    add_code_root(&sb);
+
+    let out = sb.picore(&["--json", "prune"]);
+    assert!(out.status.success());
+    assert_eq!(json(&out)["data"]["dry_run"], true);
+    assert!(merged.is_dir());
+}
+
+#[test]
+fn prune_yes_removes_merged_only() {
+    let sb = Sandbox::new();
+    let (merged, dirty) = merged_and_dirty(&sb);
+    add_code_root(&sb);
+
+    let out = sb.picore(&["--json", "prune", "--yes"]);
+    assert!(out.status.success());
+    assert!(!merged.exists());
+    assert!(dirty.is_dir());
+}
+
+#[test]
+fn prune_named_dirty_needs_force() {
+    let sb = Sandbox::new();
+    let (_merged, dirty) = merged_and_dirty(&sb);
+    add_code_root(&sb);
+
+    let out = sb.picore(&["--json", "prune", "dirty", "--yes"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(json(&out)["error"]["code"], "refused");
+    assert!(dirty.is_dir());
+
+    let out = sb.picore(&["--json", "prune", "dirty", "--yes", "--force"]);
+    assert!(out.status.success());
+    assert!(!dirty.exists());
+}
+
+#[test]
+fn status_json_has_machine_checks() {
+    let sb = Sandbox::new();
+
+    let out = sb
+        .command()
+        .env("PATH", "")
+        .args(["--json", "status"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let v = json(&out);
+    let names: Vec<&str> = v["data"]["machine"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["git", "ssh-agent", "gh"]);
+}

@@ -42,6 +42,11 @@ pub fn resolve<'a>(projects: &'a [Project], query: &str) -> Resolution<'a> {
     Resolution::None
 }
 
+/// `parent/name`, the form `resolve` accepts back.
+pub fn qualified(p: &Project) -> String {
+    format!("{}/{}", parent_name(p), p.name)
+}
+
 fn parent_name(p: &Project) -> String {
     let dir = p.work_tree.as_deref().unwrap_or_else(|| project_dir(&p.id));
     dir.parent()

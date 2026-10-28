@@ -25,6 +25,24 @@ pub enum Cmd {
     },
     Index,
     List,
+    Open {
+        name: String,
+    },
+    Status {
+        name: Option<String>,
+        #[arg(long)]
+        remote: bool,
+    },
+    Worktrees {
+        name: Option<String>,
+    },
+    Prune {
+        target: Option<String>,
+        #[arg(long)]
+        yes: bool,
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand)]
