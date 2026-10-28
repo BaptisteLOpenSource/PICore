@@ -305,6 +305,10 @@ name = "picore-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "picore-core",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

@@ -4,6 +4,8 @@ use std::path::Path;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::Serialize;
+
 use crate::config::Config;
 use crate::discovery::discover;
 use crate::error::Result;
@@ -19,7 +21,7 @@ pub enum Outcome {
     Gone,
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq, Serialize)]
 pub struct IndexReport {
     pub found: usize,
     pub updated: usize,
@@ -128,7 +130,7 @@ pub fn refresh_many(index: &Index, ids: &[ProjectId]) -> Vec<(ProjectId, Result<
 }
 
 pub fn index_all(index: &Index, cfg: &Config) -> Result<IndexReport> {
-    let ids = discover(&cfg.roots, cfg.max_depth, &cfg.ignore_dirs);
+    let ids = discover(&cfg.roots, cfg.max_depth, &cfg.ignore_dirs)?;
     let mut report = IndexReport {
         found: ids.len(),
         ..IndexReport::default()

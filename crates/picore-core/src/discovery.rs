@@ -2,17 +2,23 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::config::Config;
+use crate::error::{Error, Result};
 use crate::git;
 use crate::model::ProjectId;
+use crate::process::ProcError;
 
-pub fn discover(roots: &[PathBuf], max_depth: usize, ignore_dirs: &[String]) -> Vec<ProjectId> {
+pub fn discover(
+    roots: &[PathBuf],
+    max_depth: usize,
+    ignore_dirs: &[String],
+) -> Result<Vec<ProjectId>> {
     let mut found = Vec::new();
     for root in roots {
-        walk(root, 0, max_depth, ignore_dirs, &mut found);
+        walk(root, 0, max_depth, ignore_dirs, &mut found)?;
     }
     found.sort_by(|a, b| a.0.cmp(&b.0));
     found.dedup();
-    found
+    Ok(found)
 }
 
 pub fn suggest_roots(home: &Path) -> Vec<PathBuf> {
@@ -20,7 +26,10 @@ pub fn suggest_roots(home: &Path) -> Vec<PathBuf> {
     ["code", "dev", "projects", "src", "Documents"]
         .iter()
         .map(|d| home.join(d))
-        .filter(|p| p.is_dir() && !discover(std::slice::from_ref(p), 3, &ignore).is_empty())
+        .filter(|p| {
+            p.is_dir()
+                && discover(std::slice::from_ref(p), 3, &ignore).is_ok_and(|ids| !ids.is_empty())
+        })
         .collect()
 }
 
@@ -30,18 +39,18 @@ fn walk(
     max_depth: usize,
     ignore_dirs: &[String],
     out: &mut Vec<ProjectId>,
-) {
+) -> Result<()> {
     if is_repo_dir(dir) {
-        if let Some(id) = project_of(dir) {
+        if let Some(id) = project_of(dir)? {
             out.push(id);
         }
-        return;
+        return Ok(());
     }
     if depth == max_depth {
-        return;
+        return Ok(());
     }
     let Ok(entries) = fs::read_dir(dir) else {
-        return;
+        return Ok(());
     };
     for entry in entries.flatten() {
         let path = entry.path();
@@ -53,8 +62,9 @@ fn walk(
         if ignore_dirs.contains(&name) || (name.starts_with('.') && !is_bare_repo_dir(&path)) {
             continue;
         }
-        walk(&path, depth + 1, max_depth, ignore_dirs, out);
+        walk(&path, depth + 1, max_depth, ignore_dirs, out)?;
     }
+    Ok(())
 }
 
 fn is_repo_dir(dir: &Path) -> bool {
@@ -68,10 +78,15 @@ fn is_bare_repo_dir(dir: &Path) -> bool {
 }
 
 // Submodule git dirs live under `.git/modules/`; they belong to their superproject.
-fn project_of(dir: &Path) -> Option<ProjectId> {
-    let common = git::common_dir(dir).ok()?;
+// Only a missing git is fatal: any other failure is a broken repo, skipped.
+fn project_of(dir: &Path) -> Result<Option<ProjectId>> {
+    let common = match git::common_dir(dir) {
+        Ok(c) => c,
+        Err(e @ Error::Proc(ProcError::NotFound)) => return Err(e),
+        Err(_) => return Ok(None),
+    };
     if common.ancestors().any(|a| a.ends_with(".git/modules")) {
-        return None;
+        return Ok(None);
     }
-    Some(ProjectId(common))
+    Ok(Some(ProjectId(common)))
 }
