@@ -198,6 +198,52 @@ fn add_code_root(sb: &Sandbox) {
 }
 
 #[test]
+fn list_shows_product() {
+    let sb = Sandbox::new();
+    sb.repo("code/shop/api");
+    sb.repo("code/b");
+    add_code_root(&sb);
+    let cfg = sb.path().join("config/config.toml");
+    let text = fs::read_to_string(&cfg).unwrap();
+    let shop = sb.path().join("code/shop");
+    fs::write(
+        &cfg,
+        format!("{text}[products.shop]\npath = \"{}\"\n", s(&shop)),
+    )
+    .unwrap();
+
+    let v = json(&sb.picore(&["list", "--json"]));
+    let product = |name: &str| {
+        v["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == name)
+            .unwrap()["product"]
+            .clone()
+    };
+    assert_eq!(product("api"), "shop");
+    assert!(product("b").is_null());
+    let table = String::from_utf8(sb.picore(&["list"]).stdout).unwrap();
+    assert!(table.starts_with("NAME") && table.contains("PRODUCT") && table.contains("shop"));
+}
+
+#[test]
+fn list_survives_bad_product_config() {
+    let sb = Sandbox::new();
+    sb.repo("code/a");
+    add_code_root(&sb);
+    let cfg = sb.path().join("config/config.toml");
+    let text = fs::read_to_string(&cfg).unwrap();
+    fs::write(&cfg, format!("{text}[products.p]\npath = \"rel\"\n")).unwrap();
+
+    let out = sb.picore(&["list", "--json"]);
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("products hidden"));
+    assert_eq!(json(&out)["data"][0]["name"], "a");
+}
+
+#[test]
 fn open_ambiguous_non_tty_lists_candidates() {
     let sb = Sandbox::new();
     sb.repo("code/c1/api");
