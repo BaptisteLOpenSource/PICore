@@ -6,6 +6,7 @@ pub mod git;
 pub mod health;
 pub mod model;
 pub mod process;
+pub mod prune;
 pub mod refresh;
 pub mod store;
 pub mod tech;
