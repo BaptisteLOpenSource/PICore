@@ -7,3 +7,14 @@ license.workspace = true
 [[bin]]
 name = "picore-mcp"
 path = "src/main.rs"
+
+[dependencies]
+picore-core = { path = "../picore-core" }
+rmcp.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
