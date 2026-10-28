@@ -1,5 +1,6 @@
 [workspace]
-members = ["crates/*"]
+members = ["crates/*", "apps/gui/src-tauri"]
+default-members = ["crates/picore-cli", "crates/picore-core", "crates/picore-mcp"]
 resolver = "3"
 
 [workspace.package]
