@@ -60,19 +60,69 @@ PICore guides your AI sessions. It does not run them.
 | VS Code extension | Show / hide root config files | V1 |
 | Website | Docs and landing page | V2 |
 
-## Planned usage
+## Install
 
-> Nothing is released yet. Commands below describe the MVP target.
+Requires a Rust toolchain (pinned in `rust-toolchain.toml`), `git`, and optionally `gh`.
+From a clone of this repository:
 
 ```sh
-picore root add ~/code        # declare where your projects live
-picore index                  # find projects and their worktrees
-picore list                   # projects, branches, worktree counts, techs
-picore open api               # open a project in your editor
-picore status --remote        # git, ssh-agent, gh, and per-project health
-picore prune                  # dry run: what can be removed safely
-picore prune --yes            # remove merged, clean worktrees
+cargo install --path crates/picore-cli    # binary: picore
+cargo install --path crates/picore-mcp    # binary: picore-mcp
 ```
+
+Config and Index live in XDG paths: `~/.config/picore/config.toml` and
+`~/.local/share/picore/picore.db`. Set `PICORE_CONFIG_DIR` and `PICORE_DATA_DIR` to override.
+
+## Usage
+
+Declare where your projects live, then index them. Output below is trimmed, `~` stands for
+the home directory.
+
+```sh
+picore root add ~/Documents/Git
+# ~/Documents/Git
+picore index
+# indexed 9 projects: 9 updated, 0 removed
+picore list
+# NAME             BRANCH         WT  TECHS                             PATH
+# PICore           dev            14  -                                 ~/Documents/Git/Config/PICore
+picore status
+# git: Ok git version 2.56.0
+# ssh-agent: Ok agent has keys
+# PICore: dirty 0 ahead 0 behind 0
+picore worktrees PICore
+# PICore  ~/Documents/Git/Config/PICore  Kept(Main)
+# PICore  ~/Documents/Git/Config/PICore.worktrees/10-name-resolution  Kept(NotMerged)
+picore prune
+# dry run: nothing removed (use --yes)
+# ...one line per Prunable Worktree, omitted
+```
+
+`picore prune --yes` removes only Prunable Worktrees. A kept Worktree (unmerged, local changes) is
+removed only when you name it by path and pass `--force`. Main and locked Worktrees are
+never removed.
+
+Scanning runs git inside your repositories. PICore neutralizes fsmonitor, a repo-local `core.sshCommand` and the
+`ext` protocol, but a `filter.*.clean` driver declared through `.gitattributes` and your git config
+can still run during `status`. Only scan repositories you trust.
+
+## MCP
+
+`picore-mcp` is a read-only MCP server over stdio. Register it in Claude Code:
+
+```sh
+claude mcp add picore picore-mcp
+```
+
+Or in any MCP client config:
+
+```json
+{ "mcpServers": { "picore": { "command": "picore-mcp" } } }
+```
+
+Tools: `list_projects`, `get_project_context`, `get_project_section`, `list_worktrees`,
+`get_health`. Project context is read from `README.md`, `CLAUDE.md` and `AGENTS.md` only.
+Pass the `id` returned by `list_projects` as the `project` argument.
 
 ## Documentation
 

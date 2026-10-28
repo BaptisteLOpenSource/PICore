@@ -1,3 +1,4 @@
+use std::env;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -24,8 +25,18 @@ pub struct StatusSummary {
     pub changes: u32,
 }
 
+// Repo-local config is untrusted: fsmonitor would run a repo-chosen program on status.
 fn git(cwd: &Path, args: &[&str]) -> Result<String> {
-    Ok(process::run("git", cwd, args, TIMEOUT)?)
+    git_with(cwd, &[], args)
+}
+
+fn git_with(cwd: &Path, config: &[&str], args: &[&str]) -> Result<String> {
+    let mut full = vec!["-c", "core.fsmonitor=false"];
+    for c in config {
+        full.extend(["-c", c]);
+    }
+    full.extend(args);
+    Ok(process::run("git", cwd, &full, TIMEOUT)?)
 }
 
 pub fn parse_worktree_list(z: &str) -> Vec<WorktreeEntry> {
@@ -124,18 +135,28 @@ pub fn last_commit_at(work_tree: &Path) -> Result<Option<i64>> {
         .map_err(|e| Error::Config(format!("commit time {out:?}: {e}")))
 }
 
-pub fn ignored_env_files(work_tree: &Path) -> Result<Vec<PathBuf>> {
-    let out = git(work_tree, &["status", "--porcelain=v2", "--ignored", "-z"])?;
+pub fn ignored_files(work_tree: &Path) -> Result<Vec<PathBuf>> {
+    // ls-files lists each file: status --ignored collapses dirs, hiding .env.
+    let out = git(
+        work_tree,
+        &[
+            "ls-files",
+            "-z",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+        ],
+    )?;
     Ok(out
         .split('\0')
-        .filter_map(|f| f.strip_prefix("! "))
-        .filter(|p| {
-            Path::new(p)
-                .file_name()
-                .is_some_and(|n| n.to_string_lossy().starts_with(".env"))
-        })
+        .filter(|f| !f.is_empty())
         .map(|p| work_tree.join(p))
         .collect())
+}
+
+pub fn is_env_file(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|n| n.to_string_lossy().starts_with(".env"))
 }
 
 pub fn default_branch(repo: &Path) -> Result<Option<String>> {
@@ -144,9 +165,13 @@ pub fn default_branch(repo: &Path) -> Result<Option<String>> {
         &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
     ) {
         let origin = origin.trim_end_matches('\n');
-        return Ok(Some(
-            origin.strip_prefix("origin/").unwrap_or(origin).to_owned(),
-        ));
+        let name = origin.strip_prefix("origin/").unwrap_or(origin);
+        if verifies(repo, &format!("refs/heads/{name}"))? {
+            return Ok(Some(name.to_owned()));
+        }
+        if verifies(repo, &format!("refs/remotes/origin/{name}"))? {
+            return Ok(Some(format!("origin/{name}")));
+        }
     }
     for name in ["main", "master"] {
         if verifies(repo, &format!("refs/heads/{name}"))? {
@@ -157,16 +182,37 @@ pub fn default_branch(repo: &Path) -> Result<Option<String>> {
 }
 
 pub fn is_strict_ancestor(repo: &Path, tip: &str, of: &str) -> Result<bool> {
-    match git(repo, &["merge-base", "--is-ancestor", tip, of]) {
+    match git(
+        repo,
+        &["merge-base", "--is-ancestor", "--end-of-options", tip, of],
+    ) {
         Ok(_) => {}
         Err(Error::Proc(ProcError::Failed { code: Some(1), .. })) => return Ok(false),
         Err(e) => return Err(e),
     }
-    Ok(git(repo, &["rev-parse", tip])? != git(repo, &["rev-parse", of])?)
+    let rev = |r| git(repo, &["rev-parse", "--end-of-options", r]);
+    Ok(rev(tip)? != rev(of)?)
 }
 
 pub fn ls_remote(work_tree: &Path) -> Result<()> {
-    git(work_tree, &["ls-remote", "--heads", "origin"]).map(|_| ())
+    // ssh prompts on /dev/tty, which GIT_TERMINAL_PROMPT does not cover. The -c also
+    // overrides a repo-local core.sshCommand; GIT_SSH_COMMAND from the user wins as is.
+    let ssh = if env::var_os("GIT_SSH_COMMAND").is_some() {
+        None
+    } else {
+        let base = git(
+            work_tree,
+            &["config", "--global", "--get", "core.sshCommand"],
+        )
+        .map(|v| v.trim().to_owned())
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "ssh".to_owned());
+        Some(format!("core.sshCommand={base} -o BatchMode=yes"))
+    };
+    let mut config = vec!["protocol.ext.allow=never"];
+    config.extend(ssh.as_deref());
+    git_with(work_tree, &config, &["ls-remote", "--heads", "origin"]).map(|_| ())
 }
 
 pub fn remove_worktree(repo: &Path, path: &Path, force: bool) -> Result<()> {
@@ -186,7 +232,10 @@ pub fn prune_worktrees(repo: &Path) -> Result<()> {
 }
 
 fn verifies(repo: &Path, rev: &str) -> Result<bool> {
-    match git(repo, &["rev-parse", "--verify", "--quiet", rev]) {
+    match git(
+        repo,
+        &["rev-parse", "--verify", "--quiet", "--end-of-options", rev],
+    ) {
         Ok(_) => Ok(true),
         Err(Error::Proc(ProcError::Failed { .. })) => Ok(false),
         Err(e) => Err(e),

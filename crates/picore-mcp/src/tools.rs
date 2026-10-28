@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -8,7 +9,7 @@ use picore_core::error::{Error, Result};
 use picore_core::health::{ProjectHealth, machine_health, project_health};
 use picore_core::model::{Project, ProjectId};
 use picore_core::prune::{self, Assessment};
-use picore_core::refresh::refresh;
+use picore_core::refresh::{refresh, refresh_all};
 use picore_core::store::Index;
 use serde_json::{Value, json};
 
@@ -30,20 +31,18 @@ impl Server {
     }
 
     fn lookup(&self, project: &str) -> Result<Project> {
-        let id =
-            ProjectId(std::fs::canonicalize(project).map_err(|_| Error::NotFound(project.into()))?);
+        let not_found = || Error::NotFound(project.into());
         let index = self.index.lock().unwrap();
-        if index.get(&id)?.is_none() {
-            return Err(Error::NotFound(project.into()));
-        }
-        refresh(&index, &id)?;
-        index
-            .get(&id)?
-            .ok_or_else(|| Error::NotFound(project.into()))
+        let found = index.find(Path::new(project))?.ok_or_else(not_found)?;
+        refresh(&index, &found.id)?;
+        index.get(&found.id)?.ok_or_else(not_found)
     }
 
     pub fn list_projects(&self) -> Result<Value> {
-        let projects = self.index.lock().unwrap().all()?;
+        let (projects, failed) = refresh_all(&self.index.lock().unwrap())?;
+        for (id, e) in failed {
+            eprintln!("warn: {}: {e}", id.0.display());
+        }
         if projects.is_empty() {
             return Ok(json!({"projects": [], "hint": "run picore index"}));
         }
@@ -52,7 +51,7 @@ impl Server {
             .map(|p| {
                 json!({
                     "id": p.id.0, "name": p.name, "techs": p.techs,
-                    "branch": p.branch, "worktrees": p.worktrees.len(),
+                    "branch": p.branch, "worktrees": p.linked_worktrees().count(),
                 })
             })
             .collect();
@@ -74,7 +73,7 @@ impl Server {
             .map_or(0, |d| d.as_secs() as i64);
         p.worktrees
             .iter()
-            .map(|wt| prune::assess(&p, wt, self.cfg.stale_days, now))
+            .map(|wt| prune::assess(&p, wt, &self.cfg, now))
             .collect()
     }
 
@@ -121,7 +120,7 @@ mod tests {
             .status()
             .unwrap();
         assert!(ok.success());
-        let id = ProjectId(std::fs::canonicalize(&repo).unwrap());
+        let id = ProjectId(std::fs::canonicalize(repo.join(".git")).unwrap());
         s.index.lock().unwrap().upsert(&scan(&id).unwrap()).unwrap();
         (id.0.display().to_string(), id)
     }
@@ -131,6 +130,25 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let s = server(&dir);
         assert!(matches!(s.lookup("/tmp/nope"), Err(Error::NotFound(_))));
+    }
+
+    #[test]
+    fn lookup_by_git_dir_or_work_tree() {
+        let dir = TempDir::new().unwrap();
+        let s = server(&dir);
+        let (git_dir, id) = git_project(&dir, &s);
+        assert_eq!(s.lookup(&git_dir).unwrap().id, id);
+        let work_tree = dir.path().join("repo");
+        assert_eq!(s.lookup(work_tree.to_str().unwrap()).unwrap().id, id);
+    }
+
+    #[test]
+    fn list_projects_counts_linked_worktrees_only() {
+        let dir = TempDir::new().unwrap();
+        let s = server(&dir);
+        git_project(&dir, &s);
+        let v = s.list_projects().unwrap();
+        assert_eq!(v["projects"][0]["worktrees"], 0);
     }
 
     #[test]

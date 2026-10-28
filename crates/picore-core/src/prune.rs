@@ -2,11 +2,14 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::git;
 use crate::model::{Project, Worktree};
 
 const DAY: i64 = 86_400;
+// Not Config ignore_dirs: a discovery setting must not widen deletion.
+const REBUILDABLE: [&str; 3] = ["node_modules", "target", ".venv"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum Verdict {
@@ -27,6 +30,7 @@ pub enum Blocker {
     Locked,
     Changes(u32),
     EnvFile,
+    IgnoredFiles,
     NotMerged,
     NoDefaultBranch,
 }
@@ -39,10 +43,10 @@ pub struct Assessment {
     pub stale: bool,
 }
 
-pub fn assess(p: &Project, wt: &Worktree, stale_days: u32, now: i64) -> Result<Assessment> {
+pub fn assess(p: &Project, wt: &Worktree, cfg: &Config, now: i64) -> Result<Assessment> {
     let stale = wt
         .last_commit_at
-        .is_some_and(|t| now - t > i64::from(stale_days) * DAY);
+        .is_some_and(|t| now - t > i64::from(cfg.stale_days) * DAY);
     Ok(Assessment {
         path: wt.path.clone(),
         branch: wt.branch.clone(),
@@ -68,8 +72,19 @@ fn verdict(repo: &Path, wt: &Worktree) -> Result<Verdict> {
     if changes > 0 {
         return Ok(Verdict::Kept(Blocker::Changes(changes)));
     }
-    if !git::ignored_env_files(&wt.path)?.is_empty() {
+    let ignored = git::ignored_files(&wt.path)?;
+    if ignored.iter().any(|p| git::is_env_file(p)) {
         return Ok(Verdict::Kept(Blocker::EnvFile));
+    }
+    let blocking = ignored.iter().any(|p| {
+        let first = p
+            .strip_prefix(&wt.path)
+            .ok()
+            .and_then(|r| r.components().next());
+        !first.is_some_and(|c| REBUILDABLE.iter().any(|d| c.as_os_str() == *d))
+    });
+    if blocking {
+        return Ok(Verdict::Kept(Blocker::IgnoredFiles));
     }
     let Some(default) = git::default_branch(repo)? else {
         return Ok(Verdict::Kept(Blocker::NoDefaultBranch));

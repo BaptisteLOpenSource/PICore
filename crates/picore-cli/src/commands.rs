@@ -9,9 +9,9 @@ use picore_core::config::{Config, Paths, editor_command};
 use picore_core::discovery::suggest_roots;
 use picore_core::error::{Error, Result};
 use picore_core::health::{Check, ProjectHealth, machine_health, project_health};
-use picore_core::model::{Project, ProjectId};
+use picore_core::model::Project;
 use picore_core::prune::{self, Assessment, Blocker, Verdict};
-use picore_core::refresh::{index_all, refresh_many};
+use picore_core::refresh::{index_all, refresh_all};
 use picore_core::resolve::{Resolution, qualified, resolve};
 use picore_core::store::Index;
 use serde::Serialize;
@@ -98,6 +98,9 @@ fn index(json: bool, quiet: bool) -> Result<ExitCode> {
     }
     let index = Index::open(&paths.index_file)?;
     let report = index_all(&index, &cfg)?;
+    for f in &report.failed {
+        eprintln!("warn: {}: {}", f.id.0.display(), f.error);
+    }
     emit(json, &report, |r| {
         println!(
             "indexed {} projects: {} updated, {} removed",
@@ -120,14 +123,11 @@ fn confirm(prompt: &str) -> io::Result<bool> {
 }
 
 fn refreshed(paths: &Paths) -> Result<Vec<Project>> {
-    let index = Index::open(&paths.index_file)?;
-    let ids: Vec<ProjectId> = index.all()?.into_iter().map(|p| p.id).collect();
-    for (id, outcome) in refresh_many(&index, &ids) {
-        if let Err(e) = outcome {
-            eprintln!("warn: {}: {e}", id.0.display());
-        }
+    let (projects, failed) = refresh_all(&Index::open(&paths.index_file)?)?;
+    for (id, e) in failed {
+        eprintln!("warn: {}: {e}", id.0.display());
     }
-    index.all()
+    Ok(projects)
 }
 
 fn list(json: bool) -> Result<ExitCode> {
@@ -149,7 +149,7 @@ fn print_table(projects: &[Project]) {
         [
             p.name.clone(),
             p.branch.clone().unwrap_or_else(|| "-".into()),
-            p.worktrees.len().to_string(),
+            p.linked_worktrees().count().to_string(),
             if p.techs.is_empty() {
                 "-".into()
             } else {
@@ -191,7 +191,7 @@ fn open(json: bool, name: &str) -> Result<ExitCode> {
     let cfg = Config::load(&paths.config_file)?;
     let projects = refreshed(&paths)?;
     let project = match resolve(&projects, name) {
-        Resolution::Many(hits) if io::stdin().is_terminal() => pick(hits)?,
+        Resolution::Many(hits) if !json && io::stdin().is_terminal() => pick(hits)?,
         r => one(r, name)?,
     };
     let Some(path) = project
@@ -325,13 +325,13 @@ fn now() -> i64 {
 
 fn assess_all<'a>(
     projects: &[&'a Project],
-    stale_days: u32,
+    cfg: &Config,
 ) -> Result<Vec<(&'a Project, Assessment)>> {
     let now = now();
     let mut out = Vec::new();
     for p in projects {
         for wt in &p.worktrees {
-            out.push((*p, prune::assess(p, wt, stale_days, now)?));
+            out.push((*p, prune::assess(p, wt, cfg, now)?));
         }
     }
     Ok(out)
@@ -352,7 +352,7 @@ fn worktrees(json: bool, name: Option<&str>) -> Result<ExitCode> {
         Some(q) => vec![one(resolve(&projects, q), q)?],
         None => projects.iter().collect(),
     };
-    let assessed = assess_all(&selected, cfg.stale_days)?;
+    let assessed = assess_all(&selected, &cfg)?;
     let rows: Vec<WorktreeRow> = assessed
         .iter()
         .map(|(p, a)| WorktreeRow {
@@ -384,7 +384,7 @@ fn prune_cmd(json: bool, target: Option<&str>, yes: bool, force: bool) -> Result
     let cfg = Config::load(&paths.config_file)?;
     let projects = refreshed(&paths)?;
     let all: Vec<&Project> = projects.iter().collect();
-    let assessed = assess_all(&all, cfg.stale_days)?;
+    let assessed = assess_all(&all, &cfg)?;
     let picked: Vec<(&Project, Assessment)> = match target {
         None => assessed
             .into_iter()
@@ -403,11 +403,17 @@ fn prune_cmd(json: bool, target: Option<&str>, yes: bool, force: bool) -> Result
             let Some((p, a)) = hits.pop() else {
                 return Err(Error::NotFound(t.to_owned()));
             };
-            if let Verdict::Kept(b) = &a.verdict
-                && (!force || matches!(b, Blocker::Main | Blocker::Locked))
-            {
-                let msg = format!("{}: blocked by {b:?}", a.path.display());
-                return Ok(fail(json, "refused", &msg, &[]));
+            if let Verdict::Kept(b) = &a.verdict {
+                // A branch name can hit an unexpected Project: force needs the path.
+                let refusal = if !force || matches!(b, Blocker::Main | Blocker::Locked) {
+                    Some(format!("blocked by {b:?}"))
+                } else {
+                    (a.path != path).then(|| "--force needs the Worktree path".to_owned())
+                };
+                if let Some(why) = refusal {
+                    let msg = format!("{}: {why}", a.path.display());
+                    return Ok(fail(json, "refused", &msg, &[]));
+                }
             }
             vec![(p, a)]
         }
