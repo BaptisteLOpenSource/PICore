@@ -60,6 +60,11 @@ pub enum RootCmd {
 }
 
 fn main() -> ExitCode {
+    #[cfg(unix)]
+    {
+        // Rust ignores SIGPIPE by default, so restore it: pipes end us quietly.
+        unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
+    }
     let cli = Cli::parse();
     commands::run(cli.json, cli.quiet, &cli.command)
 }

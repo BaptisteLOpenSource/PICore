@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 use picore_core::process::{self, TIMEOUT};
 use tempfile::TempDir;
@@ -362,4 +362,23 @@ fn man_page_is_roff() {
     assert!(out.status.success());
     let page = String::from_utf8(out.stdout).unwrap();
     assert!(page.contains(".TH"));
+}
+
+#[test]
+fn broken_pipe_exits_quietly() {
+    let sb = Sandbox::new();
+    for args in [&["completions", "bash"][..], &["man"][..]] {
+        let mut child = sb
+            .command()
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        drop(child.stdout.take());
+        let out = child.wait_with_output().unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(!err.contains("panicked"), "{args:?}: {err}");
+        assert!(!err.contains("Broken pipe"), "{args:?}: {err}");
+    }
 }
