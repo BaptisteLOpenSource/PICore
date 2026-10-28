@@ -49,13 +49,15 @@ pub fn overview(paths: &Paths, discover: bool) -> Result<Overview, String> {
     };
     let index = Index::open(&paths.index_file).map_err(err)?;
     if discover && loaded {
-        let report = refresh::index_all(&index, &cfg).map_err(err)?;
-        warnings.extend(
-            report
-                .failed
-                .iter()
-                .map(|f| format!("{}: {}", f.id.0.display(), f.error)),
-        );
+        match refresh::index_all(&index, &cfg) {
+            Ok(report) => warnings.extend(
+                report
+                    .failed
+                    .iter()
+                    .map(|f| format!("{}: {}", f.id.0.display(), f.error)),
+            ),
+            Err(e) => warnings.push(format!("discovery: {e}")),
+        }
     }
     let (projects, failed) = refresh::refresh_all(&index).map_err(err)?;
     warnings.extend(
@@ -266,6 +268,17 @@ mod tests {
         assert_eq!(find(&overview(&paths, false).unwrap(), "app").product, None);
         let err = remove_product(&paths, "prod").unwrap_err();
         assert_eq!(err, "unknown product prod");
+    }
+
+    #[test]
+    fn missing_scan_root_keeps_indexed_projects() {
+        let (tmp, paths, _src) = setup();
+        overview(&paths, true).unwrap();
+        let mut cfg = Config::load(&paths.config_file).unwrap();
+        cfg.roots.push(tmp.path().join("gone"));
+        cfg.save(&paths.config_file).unwrap();
+        let ov = overview(&paths, true).unwrap();
+        assert_eq!(ov.projects.len(), 2);
     }
 
     #[test]
