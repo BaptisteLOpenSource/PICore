@@ -1,0 +1,12 @@
+[package]
+name = "picore-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "picore"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true

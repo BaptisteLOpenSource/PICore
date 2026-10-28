@@ -1,0 +1,9 @@
+[package]
+name = "picore-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "picore-mcp"
+path = "src/main.rs"
