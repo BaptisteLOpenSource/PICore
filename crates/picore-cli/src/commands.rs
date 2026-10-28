@@ -403,11 +403,17 @@ fn prune_cmd(json: bool, target: Option<&str>, yes: bool, force: bool) -> Result
             let Some((p, a)) = hits.pop() else {
                 return Err(Error::NotFound(t.to_owned()));
             };
-            if let Verdict::Kept(b) = &a.verdict
-                && (!force || matches!(b, Blocker::Main | Blocker::Locked))
-            {
-                let msg = format!("{}: blocked by {b:?}", a.path.display());
-                return Ok(fail(json, "refused", &msg, &[]));
+            if let Verdict::Kept(b) = &a.verdict {
+                // A branch name can hit an unexpected Project: force needs the path.
+                let refusal = if !force || matches!(b, Blocker::Main | Blocker::Locked) {
+                    Some(format!("blocked by {b:?}"))
+                } else {
+                    (a.path != path).then(|| "--force needs the Worktree path".to_owned())
+                };
+                if let Some(why) = refusal {
+                    let msg = format!("{}: {why}", a.path.display());
+                    return Ok(fail(json, "refused", &msg, &[]));
+                }
             }
             vec![(p, a)]
         }

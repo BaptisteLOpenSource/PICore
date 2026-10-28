@@ -99,7 +99,7 @@ picore prune
 ```
 
 `picore prune --yes` removes only Prunable Worktrees. A kept Worktree (unmerged, local changes) is
-removed only when you name it (path or branch) and pass `--force`. Main and locked Worktrees are
+removed only when you name it by path and pass `--force`. Main and locked Worktrees are
 never removed.
 
 Scanning runs git inside your repositories. PICore neutralizes fsmonitor, a repo-local `core.sshCommand` and the

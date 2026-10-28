@@ -264,6 +264,11 @@ fn prune_named_dirty_needs_force() {
     assert!(dirty.is_dir());
 
     let out = sb.picore(&["--json", "prune", "dirty", "--yes", "--force"]);
+    assert_eq!(json(&out)["error"]["code"], "refused");
+    assert!(dirty.is_dir());
+
+    let target = dirty.to_str().unwrap();
+    let out = sb.picore(&["--json", "prune", target, "--yes", "--force"]);
     assert!(out.status.success());
     assert!(!dirty.exists());
 }

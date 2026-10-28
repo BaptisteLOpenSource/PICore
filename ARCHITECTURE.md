@@ -39,7 +39,7 @@ nothing about SQLite, processes or the filesystem. Adapters own those:
 - Health Check results are never persisted.
 - PICore never writes inside a Project. The only destructive action is removing a Worktree
   through `picore prune`, which never touches local changes or unmerged work without an explicit
-  name and `--force`.
+  path and `--force`.
 - Nothing outside the context whitelist is ever read for an AI agent.
 - Residual risk: a git `filter.*.clean` driver bound through `.gitattributes` can run during
   `status`. Scan Roots must hold trusted repositories only.
