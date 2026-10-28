@@ -173,6 +173,7 @@ fn repo_local_uploadpack_is_not_run() {
     fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     r.run(&["remote", "add", "origin", r.path().to_str().unwrap()]);
     r.run(&["config", "remote.origin.uploadpack", hook.to_str().unwrap()]);
+    r.run(&["config", "protocol.file.allow", "always"]);
     assert!(git::ls_remote(r.path()).is_err());
     assert!(!marker.exists());
 }

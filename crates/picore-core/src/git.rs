@@ -210,16 +210,17 @@ pub fn ls_remote(work_tree: &Path) -> Result<()> {
         .unwrap_or_else(|| "ssh".to_owned());
         Some(format!("core.sshCommand={base} -o BatchMode=yes"))
     };
-    // Repo-local config can name programs (uploadpack, gitProxy, file/ext transports).
+    // Repo-local config can name programs (uploadpack, credential.helper, askPass...):
+    // read only the URL, run ls-remote outside the repo, allow https and ssh only.
+    let url = git(work_tree, &["config", "--get", "remote.origin.url"])?;
     let mut config = vec![
         "protocol.allow=never",
         "protocol.https.allow=always",
         "protocol.ssh.allow=always",
-        "remote.origin.uploadpack=git-upload-pack",
-        "core.gitProxy=",
     ];
     config.extend(ssh.as_deref());
-    git_with(work_tree, &config, &["ls-remote", "--heads", "origin"]).map(|_| ())
+    let args = ["ls-remote", "--heads", "--", url.trim_end_matches('\n')];
+    git_with(Path::new("/"), &config, &args).map(|_| ())
 }
 
 pub fn remove_worktree(repo: &Path, path: &Path, force: bool) -> Result<()> {
