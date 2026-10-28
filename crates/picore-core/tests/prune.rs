@@ -179,3 +179,19 @@ fn merged_with_only_rebuildable_ignored_dir_is_prunable() {
     let a = assess(&p, linked(&p), &Config::default(), now()).unwrap();
     assert_eq!(a.verdict, Verdict::Prunable(Reason::Merged));
 }
+
+#[test]
+fn env_file_inside_rebuildable_dir_is_kept() {
+    let r = TestRepo::new();
+    r.write(".gitignore", "target/\n");
+    r.commit("ignore");
+    let wt = r.tmp().join("wt");
+    r.add_worktree(&wt, "feat");
+    r.write("next.txt", "x");
+    r.commit("next");
+    fs::create_dir(wt.join("target")).unwrap();
+    fs::write(wt.join("target/.env"), "K=V").unwrap();
+    let p = project(&r);
+    let a = assess(&p, linked(&p), &Config::default(), now()).unwrap();
+    assert_eq!(a.verdict, Verdict::Kept(Blocker::EnvFile));
+}

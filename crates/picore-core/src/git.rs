@@ -136,10 +136,20 @@ pub fn last_commit_at(work_tree: &Path) -> Result<Option<i64>> {
 }
 
 pub fn ignored_files(work_tree: &Path) -> Result<Vec<PathBuf>> {
-    let out = git(work_tree, &["status", "--porcelain=v2", "--ignored", "-z"])?;
+    // ls-files lists each file: status --ignored collapses dirs, hiding .env.
+    let out = git(
+        work_tree,
+        &[
+            "ls-files",
+            "-z",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+        ],
+    )?;
     Ok(out
         .split('\0')
-        .filter_map(|f| f.strip_prefix("! "))
+        .filter(|f| !f.is_empty())
         .map(|p| work_tree.join(p))
         .collect())
 }

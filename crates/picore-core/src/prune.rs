@@ -8,6 +8,8 @@ use crate::git;
 use crate::model::{Project, Worktree};
 
 const DAY: i64 = 86_400;
+// Not Config ignore_dirs: a discovery setting must not widen deletion.
+const REBUILDABLE: [&str; 3] = ["node_modules", "target", ".venv"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum Verdict {
@@ -48,12 +50,12 @@ pub fn assess(p: &Project, wt: &Worktree, cfg: &Config, now: i64) -> Result<Asse
     Ok(Assessment {
         path: wt.path.clone(),
         branch: wt.branch.clone(),
-        verdict: verdict(&p.id.0, wt, &cfg.ignore_dirs)?,
+        verdict: verdict(&p.id.0, wt)?,
         stale,
     })
 }
 
-fn verdict(repo: &Path, wt: &Worktree, rebuildable: &[String]) -> Result<Verdict> {
+fn verdict(repo: &Path, wt: &Worktree) -> Result<Verdict> {
     if wt.is_main {
         return Ok(Verdict::Kept(Blocker::Main));
     }
@@ -79,7 +81,7 @@ fn verdict(repo: &Path, wt: &Worktree, rebuildable: &[String]) -> Result<Verdict
             .strip_prefix(&wt.path)
             .ok()
             .and_then(|r| r.components().next());
-        !first.is_some_and(|c| rebuildable.iter().any(|d| c.as_os_str() == d.as_str()))
+        !first.is_some_and(|c| REBUILDABLE.iter().any(|d| c.as_os_str() == *d))
     });
     if blocking {
         return Ok(Verdict::Kept(Blocker::IgnoredFiles));

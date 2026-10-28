@@ -102,6 +102,10 @@ picore prune
 removed only when you name it (path or branch) and pass `--force`. Main and locked Worktrees are
 never removed.
 
+Scanning runs git inside your repositories. PICore neutralizes fsmonitor, a repo-local `core.sshCommand` and the
+`ext` protocol, but a `filter.*.clean` driver declared through `.gitattributes` and your git config
+can still run during `status`. Only scan repositories you trust.
+
 ## MCP
 
 `picore-mcp` is a read-only MCP server over stdio. Register it in Claude Code:
