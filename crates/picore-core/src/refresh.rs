@@ -10,6 +10,7 @@ use crate::error::Result;
 use crate::git;
 use crate::model::{Project, ProjectId, Worktree, project_name};
 use crate::store::Index;
+use crate::tech;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
@@ -85,12 +86,13 @@ pub fn scan(id: &ProjectId) -> Result<Project> {
     let main = worktrees.iter().find(|w| w.is_main);
     let work_tree = main.map(|w| w.path.clone());
     let branch = main.and_then(|w| w.branch.clone());
+    let techs = work_tree.as_deref().map(tech::detect).unwrap_or_default();
     Ok(Project {
         id: id.clone(),
         name: project_name(id),
         work_tree,
         branch,
-        techs: Vec::new(),
+        techs,
         worktrees,
         stamp,
     })
