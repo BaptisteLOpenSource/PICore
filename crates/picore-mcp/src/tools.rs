@@ -7,7 +7,7 @@ use picore_core::config::{Config, Paths};
 use picore_core::context::{self, ProjectContext, Section};
 use picore_core::error::{Error, Result};
 use picore_core::health::{ProjectHealth, machine_health, project_health};
-use picore_core::model::{Project, ProjectId};
+use picore_core::model::{Project, ProjectId, project_dir};
 use picore_core::prune::{self, Assessment};
 use picore_core::refresh::{refresh, refresh_all};
 use picore_core::store::Index;
@@ -38,6 +38,10 @@ impl Server {
         index.get(&found.id)?.ok_or_else(not_found)
     }
 
+    fn product_of(&self, p: &Project) -> Option<&str> {
+        self.cfg.product_of(project_dir(&p.id))
+    }
+
     pub fn list_projects(&self) -> Result<Value> {
         let (projects, failed) = refresh_all(&self.index.lock().unwrap())?;
         for (id, e) in failed {
@@ -52,6 +56,7 @@ impl Server {
                 json!({
                     "id": p.id.0, "name": p.name, "techs": p.techs,
                     "branch": p.branch, "worktrees": p.linked_worktrees().count(),
+                    "product": self.product_of(p),
                 })
             })
             .collect();
@@ -59,7 +64,10 @@ impl Server {
     }
 
     pub fn get_project_context(&self, project: &str) -> Result<ProjectContext> {
-        context::context(&self.lookup(project)?)
+        let p = self.lookup(project)?;
+        let mut ctx = context::context(&p)?;
+        ctx.product = self.product_of(&p).map(str::to_owned);
+        Ok(ctx)
     }
 
     pub fn get_project_section(&self, project: &str, file: &str, heading: &str) -> Result<Section> {
@@ -149,6 +157,24 @@ mod tests {
         git_project(&dir, &s);
         let v = s.list_projects().unwrap();
         assert_eq!(v["projects"][0]["worktrees"], 0);
+    }
+
+    #[test]
+    fn product_exposed_in_list_and_context() {
+        let dir = TempDir::new().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::write(
+            dir.path().join("config.toml"),
+            format!("[products.demo]\npath = \"{}\"\n", root.display()),
+        )
+        .unwrap();
+        let s = server(&dir);
+        let (path, _) = git_project(&dir, &s);
+        assert_eq!(s.list_projects().unwrap()["projects"][0]["product"], "demo");
+        assert_eq!(
+            s.get_project_context(&path).unwrap().product.as_deref(),
+            Some("demo")
+        );
     }
 
     #[test]
