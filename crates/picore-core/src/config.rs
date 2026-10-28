@@ -1,9 +1,10 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use directories::ProjectDirs;
+use directories::{BaseDirs, ProjectDirs};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
@@ -36,6 +37,11 @@ fn project_dirs() -> Result<ProjectDirs> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Product {
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub roots: Vec<PathBuf>,
@@ -43,6 +49,8 @@ pub struct Config {
     pub ignore_dirs: Vec<String>,
     pub editor: Option<String>,
     pub stale_days: u32,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub products: BTreeMap<String, Product>,
 }
 
 impl Default for Config {
@@ -53,6 +61,7 @@ impl Default for Config {
             ignore_dirs: ["node_modules", "target", ".venv"].map(String::from).into(),
             editor: None,
             stale_days: 30,
+            products: BTreeMap::new(),
         }
     }
 }
@@ -60,10 +69,41 @@ impl Default for Config {
 impl Config {
     pub fn load(path: &Path) -> Result<Config> {
         match fs::read_to_string(path) {
-            Ok(text) => toml::from_str(&text).map_err(|e| Error::Config(e.to_string())),
+            Ok(text) => {
+                let mut config: Config =
+                    toml::from_str(&text).map_err(|e| Error::Config(e.to_string()))?;
+                config.resolve_products()?;
+                Ok(config)
+            }
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Config::default()),
             Err(e) => Err(e.into()),
         }
+    }
+
+    fn resolve_products(&mut self) -> Result<()> {
+        for product in self.products.values_mut() {
+            product.path = resolve_product_path(&product.path)?;
+        }
+        let products: Vec<(&String, &PathBuf)> = self
+            .products
+            .iter()
+            .map(|(name, p)| (name, &p.path))
+            .collect();
+        for (i, (a, pa)) in products.iter().enumerate() {
+            for (b, pb) in &products[i + 1..] {
+                if pa.starts_with(pb) || pb.starts_with(pa) {
+                    return Err(Error::Config(format!("product folders nest: {a} and {b}")));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn product_of(&self, dir: &Path) -> Option<&str> {
+        self.products
+            .iter()
+            .find(|(_, p)| dir.starts_with(&p.path))
+            .map(|(name, _)| name.as_str())
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -90,6 +130,17 @@ impl Config {
         self.roots.retain(|r| *r != p);
         self.roots.len() != before
     }
+}
+
+fn resolve_product_path(path: &Path) -> Result<PathBuf> {
+    let expanded = match path.strip_prefix("~") {
+        Ok(rest) => {
+            let home = BaseDirs::new().ok_or_else(|| Error::Config("no home directory".into()))?;
+            home.home_dir().join(rest)
+        }
+        Err(_) => path.to_path_buf(),
+    };
+    Ok(expanded.canonicalize().unwrap_or(expanded))
 }
 
 pub fn editor_command(
@@ -138,5 +189,82 @@ mod tests {
         assert_eq!(editor_command(None, Some("vim"), true).unwrap(), ["vim"]);
         assert_eq!(editor_command(None, None, true).unwrap(), ["code"]);
         assert!(editor_command(None, None, false).is_err());
+    }
+
+    fn write_config(dir: &Path, body: &str) -> PathBuf {
+        let f = dir.join("config.toml");
+        fs::write(&f, body).unwrap();
+        f
+    }
+
+    #[test]
+    fn products_parse_and_match_by_folder() {
+        let d = tempfile::tempdir().unwrap();
+        let (a, b) = (d.path().join("alpha"), d.path().join("beta"));
+        fs::create_dir_all(a.join("app")).unwrap();
+        fs::create_dir_all(&b).unwrap();
+        let f = write_config(
+            d.path(),
+            &format!(
+                "[products.alpha]\npath = \"{}\"\n[products.beta]\npath = \"{}\"\n",
+                a.display(),
+                b.display()
+            ),
+        );
+        let c = Config::load(&f).unwrap();
+        assert_eq!(
+            c.product_of(&a.join("app").canonicalize().unwrap()),
+            Some("alpha")
+        );
+        assert_eq!(c.product_of(&b.canonicalize().unwrap()), Some("beta"));
+        assert_eq!(c.product_of(&a.canonicalize().unwrap()), Some("alpha"));
+        assert_eq!(c.product_of(d.path()), None);
+    }
+
+    #[test]
+    fn nested_product_folders_are_rejected() {
+        let d = tempfile::tempdir().unwrap();
+        let outer = d.path().join("outer");
+        let inner = outer.join("inner");
+        fs::create_dir_all(&inner).unwrap();
+        let f = write_config(
+            d.path(),
+            &format!(
+                "[products.outer]\npath = \"{}\"\n[products.inner]\npath = \"{}\"\n",
+                outer.display(),
+                inner.display()
+            ),
+        );
+        assert!(
+            matches!(Config::load(&f), Err(Error::Config(m)) if m.starts_with("product folders nest: "))
+        );
+    }
+
+    #[test]
+    fn tilde_expands_to_home() {
+        let d = tempfile::tempdir().unwrap();
+        let f = write_config(
+            d.path(),
+            "[products.p]\npath = \"~/picore-missing-product\"\n",
+        );
+        let home = BaseDirs::new().unwrap().home_dir().to_path_buf();
+        let c = Config::load(&f).unwrap();
+        assert_eq!(c.products["p"].path, home.join("picore-missing-product"));
+    }
+
+    #[test]
+    fn symlinked_product_matches_canonical_project_dir() {
+        let d = tempfile::tempdir().unwrap();
+        let real = d.path().join("real");
+        let project = real.join("proj");
+        fs::create_dir_all(&project).unwrap();
+        let link = d.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let f = write_config(
+            d.path(),
+            &format!("[products.p]\npath = \"{}\"\n", link.display()),
+        );
+        let c = Config::load(&f).unwrap();
+        assert_eq!(c.product_of(&project.canonicalize().unwrap()), Some("p"));
     }
 }
