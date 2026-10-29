@@ -25,6 +25,7 @@ pub struct Listed {
 pub struct Overview {
     pub projects: Vec<Listed>,
     pub products: BTreeMap<String, PathBuf>,
+    pub roots: Vec<PathBuf>,
     pub warnings: Vec<String>,
 }
 
@@ -88,6 +89,7 @@ pub fn overview(paths: &Paths, discover: bool) -> Result<Overview, String> {
     Ok(Overview {
         projects,
         products,
+        roots: cfg.roots,
         warnings,
     })
 }
@@ -118,6 +120,20 @@ pub fn remove_product(paths: &Paths, name: &str) -> Result<(), String> {
     cfg.save(&paths.config_file).map_err(err)
 }
 
+pub fn add_root(paths: &Paths, path: &Path) -> Result<(), String> {
+    let mut cfg = Config::load(&paths.config_file).map_err(err)?;
+    cfg.add_root(path).map_err(err)?;
+    cfg.save(&paths.config_file).map_err(err)
+}
+
+pub fn remove_root(paths: &Paths, path: &Path) -> Result<(), String> {
+    let mut cfg = Config::load(&paths.config_file).map_err(err)?;
+    if !cfg.remove_root(path) {
+        return Err(format!("unknown scan root {}", path.display()));
+    }
+    cfg.save(&paths.config_file).map_err(err)
+}
+
 mod commands {
     use super::*;
 
@@ -144,6 +160,16 @@ mod commands {
     #[tauri::command(async)]
     pub fn remove_product(paths: State<'_, Paths>, name: String) -> Result<(), String> {
         crate::remove_product(&paths, &name)
+    }
+
+    #[tauri::command(async)]
+    pub fn add_root(paths: State<'_, Paths>, path: PathBuf) -> Result<(), String> {
+        crate::add_root(&paths, &path)
+    }
+
+    #[tauri::command(async)]
+    pub fn remove_root(paths: State<'_, Paths>, path: PathBuf) -> Result<(), String> {
+        crate::remove_root(&paths, &path)
     }
 }
 
@@ -186,6 +212,8 @@ pub fn run() {
             commands::machine,
             commands::add_product,
             commands::remove_product,
+            commands::add_root,
+            commands::remove_root,
         ])
         .run(tauri::generate_context!())
         .expect("tauri app");
@@ -257,6 +285,36 @@ mod tests {
         assert!(!ov.warnings.is_empty());
         assert!(add_product(&paths, "prod", Path::new("/")).is_err());
         assert_eq!(fs::read_to_string(&paths.config_file).unwrap(), "roots = 3");
+    }
+
+    #[test]
+    fn add_root_discovers_new_projects() {
+        let (tmp, paths, _src) = setup();
+        let other = tmp.path().join("other");
+        repo(&other.join("extra"));
+        add_root(&paths, &other).unwrap();
+        overview(&paths, true).unwrap();
+        let ov = overview(&paths, false).unwrap();
+        assert_eq!(ov.projects.len(), 3);
+        assert!(ov.roots.contains(&other.canonicalize().unwrap()));
+    }
+
+    #[test]
+    fn add_root_rejects_missing_folder() {
+        let (tmp, paths, _src) = setup();
+        assert!(add_root(&paths, &tmp.path().join("gone")).is_err());
+    }
+
+    #[test]
+    fn remove_root_drops_its_projects() {
+        let (_tmp, paths, src) = setup();
+        overview(&paths, true).unwrap();
+        remove_root(&paths, &src).unwrap();
+        let ov = overview(&paths, true).unwrap();
+        assert!(ov.projects.is_empty());
+        assert!(ov.roots.is_empty());
+        let err = remove_root(&paths, &src).unwrap_err();
+        assert!(err.starts_with("unknown scan root"), "{err}");
     }
 
     #[test]

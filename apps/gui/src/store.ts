@@ -17,7 +17,7 @@ export function groupByProduct(projects: Listed[], products: Record<string, stri
   return [...groups.values()].filter((g) => g.product !== null || g.projects.length > 0);
 }
 
-const EMPTY: Overview = { projects: [], products: {}, warnings: [] };
+const EMPTY: Overview = { projects: [], products: {}, roots: [], warnings: [] };
 
 export const [overview, setOverview] = createSignal<Overview>(EMPTY);
 export const [machine, setMachine] = createSignal<Check[]>([]);
@@ -54,14 +54,14 @@ export async function refresh(discover: boolean) {
   }
 }
 
-async function mutate(action: () => Promise<unknown>): Promise<boolean> {
+async function mutate(action: () => Promise<unknown>, discover = false): Promise<boolean> {
   try {
     await action();
   } catch (e) {
     setError(String(e));
     return false;
   }
-  await refresh(false);
+  await refresh(discover);
   return true;
 }
 
@@ -69,6 +69,11 @@ export const createProduct = (name: string, path: string) =>
   mutate(() => api.addProduct(name, path));
 
 export const deleteProduct = (name: string) => mutate(() => api.removeProduct(name));
+
+// Scan roots change which folders are indexed, so both refresh with discovery.
+export const addRoot = (path: string) => mutate(() => api.addRoot(path), true);
+
+export const deleteRoot = (path: string) => mutate(() => api.removeRoot(path), true);
 
 export async function chooseFolder(): Promise<string | null> {
   try {
