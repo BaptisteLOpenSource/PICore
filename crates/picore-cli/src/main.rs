@@ -25,6 +25,7 @@ pub enum Cmd {
     },
     Index,
     List,
+    Gui,
     #[command(visible_alias = "o")]
     Open {
         name: String,

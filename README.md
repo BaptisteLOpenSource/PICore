@@ -107,6 +107,8 @@ picore prune
 # ...one line per Prunable Worktree, omitted
 ```
 
+`picore gui` launches the `picore-gui` binary from the GUI bundle, detached, and returns at once.
+
 `picore prune --yes` removes only Prunable Worktrees. A kept Worktree (unmerged, local changes) is
 removed only when you name it by path and pass `--force`. Main and locked Worktrees are
 never removed.

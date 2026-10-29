@@ -21,11 +21,14 @@ use serde::Serialize;
 use crate::output::{emit, fail, mascot};
 use crate::{Cli, Cmd, RootCmd};
 
+const GUI_BIN: &str = "picore-gui";
+
 pub fn run(json: bool, quiet: bool, cmd: &Cmd) -> ExitCode {
     let result = match cmd {
         Cmd::Root { action } => root(json, action),
         Cmd::Index => index(json, quiet),
         Cmd::List => list(json),
+        Cmd::Gui => gui(json),
         Cmd::Open { name } => open(json, name),
         Cmd::Status { name, remote } => status(json, name.as_deref(), *remote),
         Cmd::Worktrees { name } => worktrees(json, name.as_deref()),
@@ -284,7 +287,30 @@ fn open(json: bool, name: &str) -> Result<ExitCode> {
 }
 
 fn code_on_path() -> bool {
-    env::var_os("PATH").is_some_and(|p| env::split_paths(&p).any(|d| d.join("code").is_file()))
+    find_on_path("code").is_some()
+}
+
+fn find_on_path(name: &str) -> Option<PathBuf> {
+    env::split_paths(&env::var_os("PATH")?)
+        .map(|d| d.join(name))
+        .find(|p| p.is_file())
+}
+
+fn gui(json: bool) -> Result<ExitCode> {
+    let Some(bin) = find_on_path(GUI_BIN) else {
+        return Ok(fail(
+            json,
+            "not_found",
+            &format!("{GUI_BIN} not found on PATH: install the GUI bundle"),
+            &[],
+        ));
+    };
+    Command::new(bin)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    Ok(ExitCode::SUCCESS)
 }
 
 fn one<'a>(r: Resolution<'a>, query: &str) -> Result<&'a Project> {

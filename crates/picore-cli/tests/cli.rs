@@ -428,3 +428,35 @@ fn broken_pipe_exits_quietly() {
         assert!(!err.contains("Broken pipe"), "{args:?}: {err}");
     }
 }
+
+#[test]
+fn gui_without_binary_fails() {
+    let sb = Sandbox::new();
+    let out = sb
+        .command()
+        .arg("gui")
+        .env("PATH", sb.path())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(4));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("picore-gui not found on PATH"));
+}
+
+#[cfg(unix)]
+#[test]
+fn gui_spawns_detached_and_prints_nothing() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sb = Sandbox::new();
+    let bin = sb.path().join("picore-gui");
+    fs::write(&bin, "#!/bin/sh\n").unwrap();
+    fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
+    let out = sb
+        .command()
+        .arg("gui")
+        .env("PATH", sb.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(out.stdout.is_empty());
+}
