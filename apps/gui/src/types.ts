@@ -59,6 +59,7 @@ export type ProjectContext = {
 export type Overview = {
   projects: Listed[];
   products: Record<string, string>;
+  roots: string[];
   warnings: string[];
 };
 

@@ -1,5 +1,6 @@
 import { For, Show } from "solid-js";
 import { ProductForm } from "./ProductForm";
+import { Roots } from "./Roots";
 import { button } from "./ui";
 import { deleteProduct, groupByProduct, overview, selectedId, setSelectedId } from "./store";
 import type { Listed, ProjectHealth } from "./types";
@@ -70,6 +71,7 @@ export function List() {
         )}
       </For>
       <ProductForm />
+      <Roots />
     </section>
   );
 }

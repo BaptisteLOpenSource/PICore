@@ -9,6 +9,8 @@ export const api = {
   machine: () => invoke<Check[]>("machine"),
   addProduct: (name: string, path: string) => invoke<void>("add_product", { name, path }),
   removeProduct: (name: string) => invoke<void>("remove_product", { name }),
+  addRoot: (path: string) => invoke<void>("add_root", { path }),
+  removeRoot: (path: string) => invoke<void>("remove_root", { path }),
   pickFolder: async (): Promise<string | null> => {
     const picked = await open({ directory: true, multiple: false });
     return typeof picked === "string" ? picked : null;
