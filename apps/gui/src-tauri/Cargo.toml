@@ -1,0 +1,26 @@
+[package]
+name = "picore-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "picore_gui"
+
+[dependencies]
+picore-core = { path = "../../../crates/picore-core" }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+notify = "8"
+serde.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[package.metadata.dist]
+dist = false

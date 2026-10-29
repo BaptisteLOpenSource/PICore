@@ -1,0 +1,21 @@
+# Rust
+/target/
+
+# JS apps (V1+)
+node_modules/
+dist/
+.astro/
+apps/gui/src-tauri/gen/
+
+# Generated at release build time
+/completions/
+/man/
+
+# Local
+.superpowers/
+.env*
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
+.idea/

@@ -1,0 +1,21 @@
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained, compile-time only via gtk3-rs glib-macros 0.18 (tauri linux), no upgrade until tauri moves to gtk4" },
+]
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "MPL-2.0", # option-ext, pulled by directories
+    "Unicode-3.0",
+    "Zlib", # foldhash
+    "CC0-1.0", # notify
+    "Apache-2.0 WITH LLVM-exception", # target-lexicon
+]
+
+[bans]
+multiple-versions = "warn" # syn 2 and 3 coexist
