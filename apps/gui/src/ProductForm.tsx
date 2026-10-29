@@ -1,5 +1,5 @@
-import { createSignal, Show } from "solid-js";
-import { button } from "./ui";
+import { createSignal } from "solid-js";
+import { button, field, primaryButton } from "./ui";
 import { chooseFolder, createProduct } from "./store";
 
 export function ProductForm() {
@@ -18,17 +18,12 @@ export function ProductForm() {
   }
 
   return (
-    <form onSubmit={submit} class="flex flex-col gap-2 border-t border-muted/30 pt-4">
-      <h2 class="font-semibold">New product</h2>
-      <label class="flex flex-col gap-1 text-sm text-muted">
-        Name
-        <input
-          value={name()}
-          onInput={(e) => setName(e.currentTarget.value)}
-          class="rounded border border-muted/30 bg-surface px-2 py-1 text-text"
-        />
+    <form onSubmit={submit} class="flex flex-col gap-3 border-t border-rule pt-4">
+      <label class="flex flex-col gap-2 text-[13px] font-medium">
+        New product name
+        <input value={name()} onInput={(e) => setName(e.currentTarget.value)} class={`${field} font-normal`} />
       </label>
-      <div class="flex min-w-0 items-center gap-2">
+      <div class="flex min-w-0 flex-wrap items-center gap-3">
         <button
           type="button"
           class={button}
@@ -39,13 +34,11 @@ export function ProductForm() {
         >
           Choose folder
         </button>
-        <Show when={path()} keyed>
-          {(folder) => <span class="truncate font-mono text-xs">{folder}</span>}
-        </Show>
+        <span class="min-w-0 flex-1 truncate font-mono text-[12px] text-muted">{path() ?? "No folder chosen"}</span>
+        <button type="submit" class={primaryButton} disabled={!ready()}>
+          Create
+        </button>
       </div>
-      <button type="submit" class={button} disabled={!ready()}>
-        Create
-      </button>
     </form>
   );
 }
