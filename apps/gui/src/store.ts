@@ -1,6 +1,6 @@
 import { createResource, createRoot, createSignal } from "solid-js";
 import { api } from "./api";
-import type { Check, Detail, Listed, Overview } from "./types";
+import type { Check, Listed, Overview } from "./types";
 
 export type Group = { product: string | null; path: string | null; projects: Listed[] };
 

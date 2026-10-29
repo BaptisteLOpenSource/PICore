@@ -5,9 +5,10 @@ import type { Detail as DetailData } from "./types";
 function Info(props: { data: DetailData }) {
   const ctx = () => props.data.context;
   const health = () => props.data.health;
+  const product = () => overview().projects.find((p) => p.id === selectedId())?.product;
   const productPath = () => {
-    const product = ctx().product;
-    return product ? overview().products[product] : undefined;
+    const name = product();
+    return name ? overview().products[name] : undefined;
   };
   return (
     <div class="flex flex-col gap-4">
@@ -15,10 +16,10 @@ function Info(props: { data: DetailData }) {
         <h2 class="text-lg font-semibold">{ctx().name}</h2>
         <p class="truncate font-mono text-xs text-muted">{selectedId()}</p>
       </div>
-      <Show when={ctx().product}>
-        {(product) => (
+      <Show when={product()}>
+        {(name) => (
           <p class="text-sm">
-            Product <span class="font-semibold">{product()}</span>
+            Product <span class="font-semibold">{name()}</span>
             <Show when={productPath()}>
               {(p) => <span class="block truncate font-mono text-xs text-muted">{p()}</span>}
             </Show>
