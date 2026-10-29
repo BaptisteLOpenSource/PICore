@@ -41,8 +41,9 @@ nothing about SQLite, processes or the filesystem. Adapters own those:
   through `picore prune`, which never touches local changes or unmerged work without an explicit
   path and `--force`.
 - Nothing outside the context whitelist is ever read for an AI agent.
-- Residual risk: a git `filter.*.clean` driver bound through `.gitattributes` can run during
-  `status`. Scan Roots must hold trusted repositories only.
+- Repo-local `filter.*` drivers are blanked during `status`. Residual risk: a driver defined in the
+  user's global or system git config still runs when a repository binds it. Scan Roots must hold
+  trusted repositories only.
 
 ## Data locations (XDG)
 

@@ -177,3 +177,23 @@ fn repo_local_uploadpack_is_not_run() {
     assert!(git::ls_remote(r.path()).is_err());
     assert!(!marker.exists());
 }
+
+#[test]
+fn repo_local_filter_driver_is_not_run_by_status() {
+    let r = TestRepo::new();
+    let marker = r.tmp().join("marker");
+    let clean = r.tmp().join("clean.sh");
+    fs::write(
+        &clean,
+        format!("#!/bin/sh\ntouch {}\ncat\n", marker.display()),
+    )
+    .unwrap();
+    fs::set_permissions(&clean, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    r.write("a.txt", "x");
+    r.commit("add a");
+    r.write(".gitattributes", "*.txt filter=mark\n");
+    r.run(&["config", "filter.mark.clean", clean.to_str().unwrap()]);
+    r.write("a.txt", "x");
+    git::status(r.path()).unwrap();
+    assert!(!marker.exists());
+}

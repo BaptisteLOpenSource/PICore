@@ -113,10 +113,37 @@ pub fn worktrees(repo: &Path) -> Result<Vec<WorktreeEntry>> {
 }
 
 pub fn status(work_tree: &Path) -> Result<StatusSummary> {
-    Ok(parse_status(&git(
+    let filters = filter_blanks(work_tree)?;
+    let config: Vec<&str> = filters.iter().map(String::as_str).collect();
+    Ok(parse_status(&git_with(
         work_tree,
+        &config,
         &["status", "--porcelain=v2", "--branch", "-z"],
     )?))
+}
+
+// Re-hashing a stale index entry runs repo-chosen filter drivers: blank them.
+fn filter_blanks(work_tree: &Path) -> Result<Vec<String>> {
+    let keys = match git(
+        work_tree,
+        &[
+            "config",
+            "--local",
+            "--null",
+            "--name-only",
+            "--get-regexp",
+            r"^filter\.",
+        ],
+    ) {
+        Ok(out) => out,
+        Err(Error::Proc(ProcError::Failed { .. })) => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    Ok(keys
+        .split('\0')
+        .filter(|k| !k.is_empty())
+        .map(|k| format!("{k}="))
+        .collect())
 }
 
 pub fn common_dir(path: &Path) -> Result<PathBuf> {
