@@ -116,6 +116,20 @@ Scanning runs git inside your repositories. PICore neutralizes fsmonitor, a repo
 `ext` protocol, but a `filter.*.clean` driver declared through `.gitattributes` and your git config
 can still run during `status`. Only scan repositories you trust.
 
+## Exit codes
+
+Stable from `v0.1.0`: a change to a code below is a breaking change.
+
+| Code | Meaning | Example |
+|---|---|---|
+| `0` | Success | `picore list` |
+| `1` | Error: git failure, no scan root, refused action, editor failed | `picore index` with no root |
+| `2` | Usage error | `picore --bogus` |
+| `3` | Ambiguous name, candidates listed | `picore open api` with two `api` Projects |
+| `4` | Not found | `picore open zzz-none` |
+
+`--json` prints the same error as `{"schema":1,"error":{"code","message","candidates"}}` on stdout.
+
 ## MCP
 
 `picore mcp` is a read-only MCP server over stdio. Register it in Claude Code:

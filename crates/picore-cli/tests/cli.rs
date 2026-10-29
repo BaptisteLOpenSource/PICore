@@ -460,3 +460,17 @@ fn gui_spawns_detached_and_prints_nothing() {
     assert!(out.status.success());
     assert!(out.stdout.is_empty());
 }
+
+#[test]
+fn exit_codes_are_stable() {
+    let sb = Sandbox::new();
+    sb.repo("code/c1/api");
+    sb.repo("code/c2/api");
+
+    assert_eq!(sb.picore(&["index"]).status.code(), Some(1));
+    assert_eq!(sb.picore(&["--bogus"]).status.code(), Some(2));
+    add_code_root(&sb);
+    assert_eq!(sb.picore(&["list"]).status.code(), Some(0));
+    assert_eq!(sb.picore(&["open", "zzz-none"]).status.code(), Some(4));
+    assert_eq!(sb.picore(&["open", "api"]).status.code(), Some(3));
+}
