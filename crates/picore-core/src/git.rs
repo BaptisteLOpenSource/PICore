@@ -113,10 +113,42 @@ pub fn worktrees(repo: &Path) -> Result<Vec<WorktreeEntry>> {
 }
 
 pub fn status(work_tree: &Path) -> Result<StatusSummary> {
-    Ok(parse_status(&git(
+    let filters = filter_blanks(work_tree)?;
+    let config: Vec<&str> = filters.iter().map(String::as_str).collect();
+    Ok(parse_status(&git_with(
         work_tree,
+        &config,
         &["status", "--porcelain=v2", "--branch", "-z"],
     )?))
+}
+
+// Re-hashing a stale index entry runs repo-chosen filter drivers: blank them.
+// --local skips include.path, so read all scopes and keep the repo ones.
+fn filter_blanks(work_tree: &Path) -> Result<Vec<String>> {
+    let out = match git(
+        work_tree,
+        &[
+            "config",
+            "--includes",
+            "--show-scope",
+            "--null",
+            "--name-only",
+            "--get-regexp",
+            r"^filter\.",
+        ],
+    ) {
+        Ok(out) => out,
+        Err(Error::Proc(ProcError::Failed { .. })) => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let fields: Vec<&str> = out.split('\0').collect();
+    Ok(fields
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .filter(|[scope, _]| matches!(*scope, "local" | "worktree"))
+        .map(|[_, key]| format!("{key}="))
+        .collect())
 }
 
 pub fn common_dir(path: &Path) -> Result<PathBuf> {
