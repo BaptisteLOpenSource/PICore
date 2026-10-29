@@ -1,6 +1,6 @@
 import { createResource, createRoot, createSignal } from "solid-js";
 import { api } from "./api";
-import type { Check, Listed, Overview } from "./types";
+import type { Check, Listed, Overview, ProjectHealth } from "./types";
 
 export type Group = { product: string | null; path: string | null; projects: Listed[] };
 
@@ -17,6 +17,8 @@ export function groupByProduct(projects: Listed[], products: Record<string, stri
   return [...groups.values()].filter((g) => g.product !== null || g.projects.length > 0);
 }
 
+export const needsAttention = (h: ProjectHealth | null) => !!h && h.dirty + h.ahead + h.behind > 0;
+
 const EMPTY: Overview = { projects: [], products: {}, roots: [], warnings: [] };
 
 export const [overview, setOverview] = createSignal<Overview>(EMPTY);
@@ -24,6 +26,9 @@ export const [machine, setMachine] = createSignal<Check[]>([]);
 export const [selectedId, setSelectedId] = createSignal<string | null>(null);
 export const [error, setError] = createSignal<string | null>(null);
 export const [refreshing, setRefreshing] = createSignal(false);
+
+// Below lg one pane shows at a time, so the open project's name is the h1.
+export const [isWide, setWide] = createSignal(true);
 
 // Keyed on overview too: a refresh refetches the open detail.
 export const [detail] = createRoot(() =>
@@ -45,6 +50,10 @@ export async function refresh(discover: boolean) {
     const next = await api.overview(discover);
     const selected = selectedId();
     if (selected && !next.projects.some((p) => p.id === selected)) setSelectedId(null);
+    // Wide layout: an empty detail pane wastes half the screen, open the first to fix.
+    if (!selectedId() && isWide()) {
+      setSelectedId((next.projects.find((p) => needsAttention(p.health)) ?? next.projects[0])?.id ?? null);
+    }
     setOverview(next);
     setError(null);
   } catch (e) {
@@ -85,6 +94,9 @@ export async function chooseFolder(): Promise<string | null> {
 }
 
 export function start() {
+  const wide = matchMedia("(min-width: 1024px)");
+  setWide(wide.matches);
+  wide.addEventListener("change", (e) => setWide(e.matches));
   void refresh(false);
   api.machine().then(setMachine, (e) => setError(String(e)));
   window.addEventListener("focus", () => void refresh(false));

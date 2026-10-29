@@ -1,77 +1,142 @@
-import { For, Show } from "solid-js";
-import { ProductForm } from "./ProductForm";
-import { Roots } from "./Roots";
-import { button } from "./ui";
-import { deleteProduct, groupByProduct, overview, selectedId, setSelectedId } from "./store";
-import type { Listed, ProjectHealth } from "./types";
+import { createSignal, For, Show } from "solid-js";
+import { button, selected } from "./ui";
+import { groupByProduct, machine, needsAttention, overview, refresh, refreshing, selectedId, setSelectedId } from "./store";
+import type { Listed } from "./types";
 
-function badges(h: ProjectHealth | null): { text: string; cls: string }[] {
-  if (!h) return [];
-  return [
-    ...(h.dirty ? [{ text: `dirty ${h.dirty}`, cls: "text-brand" }] : []),
-    ...(h.ahead ? [{ text: `ahead ${h.ahead}`, cls: "text-active" }] : []),
-    ...(h.behind ? [{ text: `behind ${h.behind}`, cls: "text-active" }] : []),
-  ];
+function finding(projects: Listed[]): string {
+  const n = projects.filter((p) => needsAttention(p.health)).length;
+  if (!projects.length) return "No project indexed yet. Add a scan root in Settings.";
+  if (!n) return `All ${projects.length} projects are clean and in sync.`;
+  const dirty = projects.filter((p) => p.health?.dirty).length;
+  const ahead = projects.filter((p) => p.health?.ahead).length;
+  const behind = projects.filter((p) => p.health?.behind).length;
+  const parts = [
+    dirty && `${dirty} with local changes`,
+    ahead && `${ahead} ahead of upstream`,
+    behind && `${behind} behind upstream`,
+  ].filter(Boolean);
+  return `${n} of ${projects.length} need attention: ${parts.join(", ")}.`;
 }
 
-function Row(props: { project: Listed }) {
+function Count(props: { value: number | undefined; class?: string }) {
   return (
-    <button
-      type="button"
-      aria-pressed={selectedId() === props.project.id}
-      onClick={() => setSelectedId(props.project.id)}
-      class={
-        "flex w-full items-center justify-between gap-2 rounded border border-muted/30 bg-surface px-3 py-2 " +
-        "text-left hover:border-active aria-[pressed=true]:border-active"
-      }
-    >
-      <span class="min-w-0 truncate">{props.project.name}</span>
-      <span class="flex shrink-0 items-center gap-2 text-xs">
-        <Show when={props.project.branch}>
-          {(b) => <span class="font-mono text-muted">{b()}</span>}
-        </Show>
-        <For each={badges(props.project.health)}>
-          {(b) => <span class={b.cls}>{b.text}</span>}
-        </For>
-      </span>
-    </button>
+    <td class={`text-right ${props.class ?? "px-3"} ${props.value ? "text-text" : "text-muted"}`}>
+      {props.value === undefined ? "-" : props.value}
+    </td>
   );
 }
 
-function confirmDelete(name: string) {
-  if (confirm(`Remove product ${name}? Only its config entry goes, folders are untouched.`)) {
-    void deleteProduct(name);
-  }
+function Row(props: { project: Listed }) {
+  const h = () => props.project.health ?? undefined;
+  return (
+    <tr
+      aria-selected={selectedId() === props.project.id}
+      class="relative h-[52px] border-b sm:h-[42px] border-rule hover:bg-raised/50 aria-[selected=true]:bg-raised"
+    >
+      <td class="max-w-0 w-[45%] pl-8 pr-3">
+        <button
+          type="button"
+          onClick={() => setSelectedId(props.project.id)}
+          class="block w-full truncate text-left after:absolute after:inset-0 after:content-['']"
+        >
+          {props.project.name}
+        </button>
+        <span class="block truncate font-mono text-[12px] text-muted sm:hidden">{props.project.branch ?? "-"}</span>
+      </td>
+      <td class="hidden max-w-0 truncate px-3 font-mono text-[13px] text-muted sm:table-cell">{props.project.branch ?? "-"}</td>
+      <Count value={h()?.dirty} />
+      <Count value={h()?.ahead} />
+      <Count value={h()?.behind} class="pl-3 pr-8" />
+    </tr>
+  );
 }
 
 export function List() {
-  const groups = () => groupByProduct(overview().projects, overview().products);
+  const [onlyAttention, setOnlyAttention] = createSignal(false);
+  const projects = () => overview().projects;
+  const shown = () => (onlyAttention() ? projects().filter((p) => needsAttention(p.health)) : projects());
+  const groups = () =>
+    groupByProduct(shown(), overview().products).filter((g) => g.projects.length > 0);
+  const tabs = () => [
+    { label: "All", count: projects().length, on: false },
+    { label: "Needs attention", count: projects().filter((p) => needsAttention(p.health)).length, on: true },
+  ];
+
   return (
-    <section aria-label="Projects" class="flex min-w-0 flex-col gap-4">
-      <For each={groups()}>
-        {(group) => (
-          <div class="flex flex-col gap-1">
-            <header class="flex items-start justify-between gap-2">
-              <div class="min-w-0">
-                <h2 class="font-semibold">{group.product ?? "No product"}</h2>
-                <Show when={group.path}>
-                  {(p) => <p class="truncate font-mono text-xs text-muted">{p()}</p>}
-                </Show>
-              </div>
-              <Show when={group.product} keyed>
-                {(name) => (
-                  <button type="button" class={button} onClick={() => confirmDelete(name)}>
-                    Delete
-                  </button>
-                )}
-              </Show>
-            </header>
-            <For each={group.projects}>{(project) => <Row project={project} />}</For>
-          </div>
-        )}
-      </For>
-      <ProductForm />
-      <Roots />
+    <section aria-label="Projects" class="flex h-full flex-col overflow-y-auto">
+      <header class="flex flex-wrap items-start justify-between gap-4 px-8 pt-8">
+        <div class="min-w-0">
+          <h1 class="text-[26px] font-semibold leading-tight tracking-[-0.01em]">Projects</h1>
+          <p class="mt-1 text-[13px] text-muted">{finding(projects())}</p>
+        </div>
+        <div class="flex items-center gap-5">
+          <ul aria-label="Machine health" class="hidden items-center gap-3 md:flex">
+            <For each={machine()}>
+              {(c) => (
+                <li title={c.hint ?? c.message} class="flex items-center gap-1.5 text-[12px] text-muted">
+                  <span
+                    class={`h-1.5 w-1.5 rounded-full ${c.status === "ok" ? "bg-success" : c.status === "ko" ? "bg-alert" : "bg-control"}`}
+                    aria-hidden="true"
+                  />
+                  {c.name}
+                  <span class="sr-only">{c.status}</span>
+                </li>
+              )}
+            </For>
+          </ul>
+          <button type="button" class={button} disabled={refreshing()} onClick={() => refresh(true)}>
+            {refreshing() ? "Scanning..." : "Refresh"}
+          </button>
+        </div>
+      </header>
+
+      <div role="tablist" class="mt-6 flex gap-6 border-b border-border px-8">
+        <For each={tabs()}>
+          {(t) => (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={onlyAttention() === t.on}
+              onClick={() => setOnlyAttention(t.on)}
+              class={`-mb-px pb-2.5 text-[13px] text-muted hover:text-text aria-[selected=true]:text-text ${selected}`}
+            >
+              {t.label} <span class="ml-1 text-muted">{t.count}</span>
+            </button>
+          )}
+        </For>
+      </div>
+
+      <table class="w-full table-fixed border-collapse text-[13px]">
+        <thead>
+          <tr class="h-10 text-[12px] text-muted">
+            <th scope="col" class="w-[45%] pl-8 pr-3 text-left font-normal">Project</th>
+            <th scope="col" class="hidden px-3 text-left font-normal sm:table-cell">Branch</th>
+            <th scope="col" class="w-20 px-3 text-right font-normal sm:w-24">Changes</th>
+            <th scope="col" class="w-16 px-3 text-right font-normal sm:w-20">Ahead</th>
+            <th scope="col" class="w-20 pl-3 pr-8 text-right font-normal sm:w-24">Behind</th>
+          </tr>
+        </thead>
+        <For each={groups()}>
+          {(group) => (
+            <tbody>
+              <tr>
+                <th scope="colgroup" colspan="5" class="pl-8 pr-8 pb-2 pt-5 text-left font-normal">
+                  <span class="text-[12px] text-muted">{group.product ?? "No product"}</span>
+                  <Show when={group.path}>
+                    {(p) => <span class="ml-2 font-mono text-[11px] text-muted/70">{p()}</span>}
+                  </Show>
+                </th>
+              </tr>
+              <For each={group.projects}>{(project) => <Row project={project} />}</For>
+            </tbody>
+          )}
+        </For>
+      </table>
+      <Show when={onlyAttention() && shown().length === 0}>
+        <p class="mx-8 mt-4 rounded-md border border-dashed border-control px-4 py-2.5 text-[13px] text-muted">
+          Nothing to commit, push or pull.
+        </p>
+      </Show>
     </section>
   );
 }

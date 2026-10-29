@@ -19,3 +19,4 @@ apps/gui/src-tauri/gen/
 *.db-shm
 .DS_Store
 .idea/
+.taste-skill/
