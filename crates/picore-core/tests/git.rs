@@ -178,8 +178,7 @@ fn repo_local_uploadpack_is_not_run() {
     assert!(!marker.exists());
 }
 
-#[test]
-fn repo_local_filter_driver_is_not_run_by_status() {
+fn assert_filter_not_run(bind: impl Fn(&TestRepo, &str)) {
     let r = TestRepo::new();
     let marker = r.tmp().join("marker");
     let clean = r.tmp().join("clean.sh");
@@ -192,8 +191,24 @@ fn repo_local_filter_driver_is_not_run_by_status() {
     r.write("a.txt", "x");
     r.commit("add a");
     r.write(".gitattributes", "*.txt filter=mark\n");
-    r.run(&["config", "filter.mark.clean", clean.to_str().unwrap()]);
+    bind(&r, clean.to_str().unwrap());
     r.write("a.txt", "x");
     git::status(r.path()).unwrap();
     assert!(!marker.exists());
+}
+
+#[test]
+fn repo_local_filter_driver_is_not_run_by_status() {
+    assert_filter_not_run(|r, clean| {
+        r.run(&["config", "filter.mark.clean", clean]);
+    });
+}
+
+#[test]
+fn included_filter_driver_is_not_run_by_status() {
+    assert_filter_not_run(|r, clean| {
+        let inc = r.tmp().join("inc.cfg");
+        fs::write(&inc, format!("[filter \"mark\"]\n\tclean = {clean}\n")).unwrap();
+        r.run(&["config", "include.path", inc.to_str().unwrap()]);
+    });
 }

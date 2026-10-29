@@ -123,12 +123,14 @@ pub fn status(work_tree: &Path) -> Result<StatusSummary> {
 }
 
 // Re-hashing a stale index entry runs repo-chosen filter drivers: blank them.
+// --local skips include.path, so read all scopes and keep the repo ones.
 fn filter_blanks(work_tree: &Path) -> Result<Vec<String>> {
-    let keys = match git(
+    let out = match git(
         work_tree,
         &[
             "config",
-            "--local",
+            "--includes",
+            "--show-scope",
             "--null",
             "--name-only",
             "--get-regexp",
@@ -139,10 +141,13 @@ fn filter_blanks(work_tree: &Path) -> Result<Vec<String>> {
         Err(Error::Proc(ProcError::Failed { .. })) => return Ok(Vec::new()),
         Err(e) => return Err(e),
     };
-    Ok(keys
-        .split('\0')
-        .filter(|k| !k.is_empty())
-        .map(|k| format!("{k}="))
+    let fields: Vec<&str> = out.split('\0').collect();
+    Ok(fields
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .filter(|[scope, _]| matches!(*scope, "local" | "worktree"))
+        .map(|[_, key]| format!("{key}="))
         .collect())
 }
 
