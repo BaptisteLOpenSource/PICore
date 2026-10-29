@@ -20,6 +20,7 @@ Local index of git Projects + Worktrees, health checks, read-only MCP context fo
 ## Commands
 
 - `just check` = fmt + clippy `-D warnings` + tests. Run before every commit.
+- `just gui-check` = GUI fmt/clippy/tests/vitest (needs pnpm + libwebkit2gtk-4.1-dev).
 
 ## Workflow
 

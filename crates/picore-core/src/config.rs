@@ -132,6 +132,31 @@ impl Config {
         self.roots.retain(|r| *r != p);
         self.roots.len() != before
     }
+
+    pub fn add_product(&mut self, name: &str, path: &Path) -> Result<()> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(Error::Config("product name is empty".into()));
+        }
+        if self.products.contains_key(name) {
+            return Err(Error::Config(format!("product {name} already exists")));
+        }
+        let mut next = self.clone();
+        next.products.insert(
+            name.to_owned(),
+            Product {
+                path: path.to_path_buf(),
+                resolved: PathBuf::new(),
+            },
+        );
+        next.resolve_products()?;
+        *self = next;
+        Ok(())
+    }
+
+    pub fn remove_product(&mut self, name: &str) -> bool {
+        self.products.remove(name).is_some()
+    }
 }
 
 fn resolve_product_path(name: &str, path: &Path) -> Result<PathBuf> {
@@ -226,6 +251,35 @@ mod tests {
         assert_eq!(c.product_of(&b.canonicalize().unwrap()), Some("beta"));
         assert_eq!(c.product_of(&a.canonicalize().unwrap()), Some("alpha"));
         assert_eq!(c.product_of(d.path()), None);
+    }
+
+    #[test]
+    fn add_product_validates_like_load() {
+        let d = tempfile::tempdir().unwrap();
+        let outer = d.path().join("outer");
+        fs::create_dir_all(outer.join("inner")).unwrap();
+        let mut c = Config::default();
+        c.add_product("outer", &outer).unwrap();
+        assert!(
+            matches!(c.add_product("outer", d.path()), Err(Error::Config(m)) if m.contains("already exists"))
+        );
+        assert!(
+            matches!(c.add_product("inner", &outer.join("inner")), Err(Error::Config(m)) if m.starts_with("product folders nest: "))
+        );
+        assert!(
+            matches!(c.add_product(" ", d.path()), Err(Error::Config(m)) if m.contains("empty"))
+        );
+        assert!(matches!(
+            c.add_product("rel", Path::new("rel")),
+            Err(Error::Config(_))
+        ));
+        assert_eq!(c.products.len(), 1);
+        let f = d.path().join("config.toml");
+        c.save(&f).unwrap();
+        let inner = outer.join("inner").canonicalize().unwrap();
+        assert_eq!(Config::load(&f).unwrap().product_of(&inner), Some("outer"));
+        assert!(c.remove_product("outer"));
+        assert!(!c.remove_product("outer"));
     }
 
     #[test]
