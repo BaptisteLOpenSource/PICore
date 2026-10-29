@@ -1,5 +1,8 @@
 mod tools;
 
+use std::io;
+use std::process::ExitCode;
+
 use picore_core::config::Paths;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{ServiceExt, tool, tool_router, transport::stdio};
@@ -63,9 +66,14 @@ impl Handler {
     }
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+pub fn run() -> picore_core::error::Result<ExitCode> {
     let server = Handler(Server::open(&Paths::from_env()?)?);
-    server.serve(stdio()).await?.waiting().await?;
-    Ok(())
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            let running = server.serve(stdio()).await.map_err(io::Error::other)?;
+            running.waiting().await.map_err(io::Error::other)
+        })?;
+    Ok(ExitCode::SUCCESS)
 }

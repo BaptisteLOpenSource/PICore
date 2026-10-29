@@ -1,10 +1,12 @@
 mod commands;
+mod mcp;
 mod output;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use output::fail;
 
 #[derive(Parser)]
 #[command(name = "picore", version)]
@@ -26,6 +28,8 @@ pub enum Cmd {
     Index,
     List,
     Gui,
+    /// Read-only MCP server over stdio
+    Mcp,
     #[command(visible_alias = "o")]
     Open {
         name: String,
@@ -67,5 +71,8 @@ fn main() -> ExitCode {
         unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     }
     let cli = Cli::parse();
-    commands::run(cli.json, cli.quiet, &cli.command)
+    let Cmd::Mcp = cli.command else {
+        return commands::run(cli.json, cli.quiet, &cli.command);
+    };
+    mcp::run().unwrap_or_else(|e| fail(cli.json, "error", &e.to_string(), &[]))
 }

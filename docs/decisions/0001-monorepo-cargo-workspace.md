@@ -3,7 +3,8 @@
 All components live in one repository: Rust crates under `crates/` (core, CLI, MCP server) and,
 from V1, JavaScript/TypeScript apps under `apps/` (GUI frontend, VS Code extension). One repo
 means one schema and one core library, with no synchronised pull requests across repositories.
-Each component still installs on its own (`cargo install picore-cli`, `picore-mcp`, a GUI package).
+Each component still installs on its own (`cargo install picore-cli`, a GUI package). Install part
+superseded by [ADR 0005](0005-mcp-as-cli-subcommand.md): the MCP server ships as `picore mcp`.
 
 ## Considered Options
 

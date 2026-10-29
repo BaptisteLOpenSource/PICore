@@ -13,8 +13,11 @@ clap.workspace = true
 clap_complete.workspace = true
 clap_mangen.workspace = true
 picore-core = { path = "../picore-core" }
+rmcp.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tokio.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

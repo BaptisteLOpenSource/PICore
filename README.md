@@ -57,7 +57,7 @@ PICore has no telemetry. It sends nothing to its authors.
 |---|---|---|
 | `picore-core` | Index, discovery, health, context (library) | MVP |
 | `picore` | CLI | MVP |
-| `picore-mcp` | Read-only MCP server (stdio) | MVP |
+| `picore mcp` | Read-only MCP server (stdio), part of the CLI | MVP |
 | GUI | Desktop dashboard (Tauri + SolidJS) | V1 |
 | VS Code extension | Show / hide root config files | V1 |
 | Website | Docs and landing page | V2 |
@@ -69,7 +69,6 @@ From a clone of this repository:
 
 ```sh
 cargo install --path crates/picore-cli    # binary: picore
-cargo install --path crates/picore-mcp    # binary: picore-mcp
 ```
 
 Shell completions (bash, zsh, fish) and a man page are written to stdout:
@@ -119,17 +118,19 @@ can still run during `status`. Only scan repositories you trust.
 
 ## MCP
 
-`picore-mcp` is a read-only MCP server over stdio. Register it in Claude Code:
+`picore mcp` is a read-only MCP server over stdio. Register it in Claude Code:
 
 ```sh
-claude mcp add picore picore-mcp
+claude mcp add picore -- picore mcp
 ```
 
 Or in any MCP client config:
 
 ```json
-{ "mcpServers": { "picore": { "command": "picore-mcp" } } }
+{ "mcpServers": { "picore": { "command": "picore", "args": ["mcp"] } } }
 ```
+
+Upgrading from `picore-mcp`: the binary is gone. Replace the command with `picore` and the args with `["mcp"]`.
 
 Tools: `list_projects`, `get_project_context`, `get_project_section`, `list_worktrees`,
 `get_health`. Project context is read from `README.md`, `CLAUDE.md` and `AGENTS.md` only.

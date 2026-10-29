@@ -7,7 +7,8 @@ use tempfile::TempDir;
 #[test]
 fn stdio_lists_tools() {
     let dir = TempDir::new().unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_picore-mcp"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_picore"))
+        .arg("mcp")
         .env("PICORE_CONFIG_DIR", dir.path())
         .env("PICORE_DATA_DIR", dir.path())
         .stdin(Stdio::piped())

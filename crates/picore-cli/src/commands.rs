@@ -35,6 +35,7 @@ pub fn run(json: bool, quiet: bool, cmd: &Cmd) -> ExitCode {
         Cmd::Prune { target, yes, force } => prune_cmd(json, target.as_deref(), *yes, *force),
         Cmd::Completions { shell } => completions(*shell),
         Cmd::Man => man(),
+        Cmd::Mcp => unreachable!("main.rs dispatches mcp"),
     };
     result.unwrap_or_else(|e| match e {
         Error::Ambiguous(candidates) => fail(json, "ambiguous", "ambiguous name", &candidates),

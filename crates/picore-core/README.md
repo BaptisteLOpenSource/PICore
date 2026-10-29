@@ -1,6 +1,6 @@
 # picore-core
 
-Library behind `picore` and `picore-mcp`. Bounded context: Projects, Worktrees, the Index,
+Library behind `picore` (CLI and `picore mcp`). Bounded context: Projects, Worktrees, the Index,
 Health Checks and Project Context.
 
 - Vocabulary: [GLOSSARY.md](../../GLOSSARY.md). Code names are glossary terms.

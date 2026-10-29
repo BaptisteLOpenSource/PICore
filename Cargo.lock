@@ -2490,9 +2490,12 @@ dependencies = [
  "clap_mangen",
  "libc",
  "picore-core",
+ "rmcp",
+ "schemars 1.2.3",
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -2521,19 +2524,6 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tempfile",
-]
-
-[[package]]
-name = "picore-mcp"
-version = "0.1.0"
-dependencies = [
- "picore-core",
- "rmcp",
- "schemars 1.2.3",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
 ]
 
 [[package]]
