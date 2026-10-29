@@ -39,10 +39,14 @@ installers = ["shell"]
 targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl"]
 # Checksums to generate for each App
 checksum = "sha256"
+# Archive format for unix targets
+unix-archive = ".tar.gz"
 # Whether to enable GitHub Attestations
 github-attestations = true
 # Which actions to run on pull requests
-pr-run-mode = "plan"
+pr-run-mode = "upload"
+# No shared cache in release builds (cache poisoning)
+cache-builds = false
 allow-dirty = ["ci"]
 # Path that installers should place binaries in
 install-path = "CARGO_HOME"
