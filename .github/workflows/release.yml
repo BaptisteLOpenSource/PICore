@@ -131,6 +131,13 @@ jobs:
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
             echo "$HOME/.cargo/bin" >> $GITHUB_PATH
           fi
+      - name: Generate shell completions and man page
+        run: |
+          mkdir -p completions man
+          for shell in bash zsh fish; do
+            cargo run -q -p picore -- completions "$shell" > "completions/picore.$shell"
+          done
+          cargo run -q -p picore -- man > man/picore.1
       - name: Install dist
         run: ${{ matrix.install_dist.run }}
       # Get the dist-manifest
