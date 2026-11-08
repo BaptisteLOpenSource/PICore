@@ -313,3 +313,13 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+
+  custom-gui-release:
+    needs:
+      - plan
+      - announce
+    permissions:
+      contents: write
+    uses: ./.github/workflows/gui-release.yml
+    with:
+      plan: ${{ needs.plan.outputs.val }}
