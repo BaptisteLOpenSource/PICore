@@ -20,3 +20,4 @@ apps/gui/src-tauri/gen/
 .DS_Store
 .idea/
 .taste-skill/
+/picore.1
