@@ -1,8 +1,10 @@
 mod support;
 
 use std::fs;
+use std::path::PathBuf;
 
 use picore_core::git;
+use picore_core::process::{self, TIMEOUT};
 use support::TestRepo;
 
 #[test]
@@ -180,18 +182,11 @@ fn repo_local_uploadpack_is_not_run() {
 
 fn assert_filter_not_run(bind: impl Fn(&TestRepo, &str)) {
     let r = TestRepo::new();
-    let marker = r.tmp().join("marker");
-    let clean = r.tmp().join("clean.sh");
-    fs::write(
-        &clean,
-        format!("#!/bin/sh\ntouch {}\ncat\n", marker.display()),
-    )
-    .unwrap();
-    fs::set_permissions(&clean, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let (marker, clean) = marker_script(&r);
     r.write("a.txt", "x");
     r.commit("add a");
     r.write(".gitattributes", "*.txt filter=mark\n");
-    bind(&r, clean.to_str().unwrap());
+    bind(&r, &clean);
     r.write("a.txt", "x");
     git::status(r.path()).unwrap();
     assert!(!marker.exists());
@@ -211,4 +206,78 @@ fn included_filter_driver_is_not_run_by_status() {
         fs::write(&inc, format!("[filter \"mark\"]\n\tclean = {clean}\n")).unwrap();
         r.run(&["config", "include.path", inc.to_str().unwrap()]);
     });
+}
+
+fn marker_script(r: &TestRepo) -> (PathBuf, String) {
+    let marker = r.tmp().join("marker");
+    let clean = r.tmp().join("clean.sh");
+    fs::write(
+        &clean,
+        format!("#!/bin/sh\ntouch {}\ncat\n", marker.display()),
+    )
+    .unwrap();
+    fs::set_permissions(&clean, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    (marker, clean.to_str().unwrap().to_owned())
+}
+
+#[test]
+fn status_does_not_rewrite_index_on_stale_entries() {
+    let r = TestRepo::new();
+    let index = r.path().join(".git/index");
+    let before = fs::read(&index).unwrap();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(100);
+    fs::File::options()
+        .write(true)
+        .open(r.path().join("README.md"))
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    git::status(r.path()).unwrap();
+    assert_eq!(fs::read(&index).unwrap(), before);
+}
+
+#[test]
+fn submodule_filter_driver_is_not_run_by_status() {
+    let r = TestRepo::new();
+    let (marker, clean) = marker_script(&r);
+    let sub = r.path().join("sub");
+    fs::create_dir(&sub).unwrap();
+    let in_sub = |args: &[&str]| process::run("git", &sub, args, TIMEOUT).unwrap();
+    in_sub(&["init", "-q"]);
+    fs::write(sub.join(".gitattributes"), "*.txt filter=mark\n").unwrap();
+    fs::write(sub.join("f.txt"), "x").unwrap();
+    in_sub(&["add", "-A"]);
+    let tree = in_sub(&["write-tree"]);
+    let sha = in_sub(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t.invalid",
+        "commit-tree",
+        tree.trim(),
+        "-m",
+        "sub",
+    ]);
+    in_sub(&["update-ref", "HEAD", sha.trim()]);
+    r.run(&["add", "sub"]);
+    r.commit("add sub");
+    in_sub(&["config", "filter.mark.clean", &clean]);
+    fs::write(sub.join("f.txt"), "x").unwrap();
+    git::status(r.path()).unwrap();
+    assert!(!marker.exists());
+}
+
+#[test]
+fn repo_local_filter_driver_is_not_run_by_worktree_remove() {
+    let r = TestRepo::new();
+    let (marker, clean) = marker_script(&r);
+    r.write(".gitattributes", "*.txt filter=mark\n");
+    r.write("a.txt", "x");
+    r.commit("add a");
+    let wt = r.tmp().join("wt");
+    r.add_worktree(&wt, "feat");
+    r.run(&["config", "filter.mark.clean", &clean]);
+    fs::write(wt.join("a.txt"), "x").unwrap();
+    git::remove_worktree(r.path(), &wt, false).unwrap();
+    assert!(!marker.exists());
 }
