@@ -24,16 +24,15 @@ pub struct Info {
 
 pub fn info(t: &Target, product: Option<&str>) -> Result<Info> {
     let p = t.project;
-    let path = t
-        .worktree
-        .map(|w| w.path.clone())
-        .or_else(|| p.work_tree.clone())
-        .unwrap_or_else(|| project_dir(&p.id).to_owned());
+    let path = t.dir().unwrap_or_else(|| project_dir(&p.id)).to_owned();
     let branch = t.worktree.map_or(&p.branch, |w| &w.branch).clone();
-    let (github, github_error) = match p.repo.as_deref().map(gh::repo_view) {
-        Some(Ok(g)) => (Some(g), None),
-        Some(Err(e)) => (None, Some(e)),
-        None => (
+    let (github, github_error) = match (&p.repo, git::origin_url(&path)?) {
+        (Some(_), Some(url)) => match git::github_repo(&url).as_deref().map(gh::repo_view) {
+            Some(Ok(g)) => (Some(g), None),
+            Some(Err(e)) => (None, Some(e)),
+            None => (None, Some("gh: origin is not on GitHub".to_owned())),
+        },
+        _ => (
             None,
             Some("no GitHub repo: origin remote not set".to_owned()),
         ),

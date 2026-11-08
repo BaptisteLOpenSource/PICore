@@ -92,11 +92,7 @@ impl Server {
             Resolution::None => return Err(Error::NotFound(query.into())),
         };
         let p = t.project;
-        let dir = t
-            .worktree
-            .map(|w| w.path.as_path())
-            .or(p.work_tree.as_deref())
-            .unwrap_or_else(|| project_dir(&p.id));
+        let dir = t.dir().unwrap_or_else(|| project_dir(&p.id));
         let files: Vec<_> = WHITELIST
             .iter()
             .map(|f| dir.join(f))
@@ -104,7 +100,7 @@ impl Server {
             .collect();
         let row = |w: &picore_core::model::Worktree| json!({"path": w.path, "branch": w.branch, "issue": w.issue});
         Ok(json!({
-            "name": p.name, "product": self.product_of(p), "path": dir, "repo": p.repo,
+            "id": p.id.0, "name": p.name, "product": self.product_of(p), "path": dir, "repo": p.repo,
             "worktree": t.worktree.map(row),
             "worktrees": p.worktrees.iter().map(row).collect::<Vec<_>>(),
             "files": files,
@@ -207,6 +203,7 @@ mod tests {
         std::fs::write(root.join("README.md"), "# r").unwrap();
         let v = s.find_project("repo").unwrap();
         assert_eq!(v["path"], json!(root));
+        assert_eq!(v["id"], json!(id.0));
         assert_eq!(v["files"], json!([root.join("README.md")]));
         assert_eq!(v["worktree"], Value::Null);
         let v = s.find_project(root.to_str().unwrap()).unwrap();

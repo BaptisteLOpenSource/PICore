@@ -2,7 +2,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::gh;
 
 const MAX_SLUG: usize = 40;
@@ -60,7 +60,9 @@ pub fn slug(title: &str) -> String {
 }
 
 pub fn worktree_name(project_dir: &Path, issue: u32, title: &str) -> WorktreeName {
-    let branch = format!("{issue}-{}", slug(title));
+    let slug = slug(title);
+    let slug = if slug.is_empty() { "issue" } else { &slug };
+    let branch = format!("{issue}-{slug}");
     let name = project_dir
         .file_name()
         .unwrap_or_default()
@@ -78,7 +80,7 @@ pub fn worktree_name(project_dir: &Path, issue: u32, title: &str) -> WorktreeNam
 
 /// Fetches the issue title with gh run in the Project, so gh picks its repo.
 pub fn for_issue(project_dir: &Path, issue: u32) -> Result<WorktreeName> {
-    let title = gh::issue_title(project_dir, issue)?;
+    let title = gh::issue_title(project_dir, issue).map_err(|e| Error::Gh(e.to_string()))?;
     Ok(worktree_name(project_dir, issue, &title))
 }
 
@@ -111,6 +113,12 @@ mod tests {
         ] {
             assert_eq!(slug(title), want, "{title}");
         }
+    }
+
+    #[test]
+    fn empty_slug_falls_back_to_issue() {
+        let n = worktree_name(Path::new("/g/Config/PICore"), 82, "🚀");
+        assert_eq!(n.branch, "82-issue");
     }
 
     #[test]

@@ -168,9 +168,12 @@ Or in any MCP client config:
 Upgrading from `picore-mcp`: the binary is gone. Replace the command with `picore` and the args with `["mcp"]`.
 
 Tools: `list_projects`, `find_project`, `get_project_context`, `get_project_section`,
-`list_worktrees`, `get_health`, `worktree_name` (`project`, `issue`), `get_repo_info` (`query`). `find_project` takes a name, `parent/name`, `name@<issue>`
-(the Worktree on branch `<issue>-...`) or a path inside a Project or Worktree. Project context is read from `README.md`, `CLAUDE.md` and `AGENTS.md` only.
-Pass the `id` returned by `list_projects` as the `project` argument.
+`list_worktrees`, `get_health`, `worktree_name` (`project`, `issue`), `get_repo_info` (`query`).
+`find_project`, `get_repo_info` and `worktree_name.project` take a query: a name, `parent/name`,
+`name@<issue>` (the Worktree on branch `<issue>-...`) or a path inside a Project or Worktree.
+Project context is read from `README.md`, `CLAUDE.md` and `AGENTS.md` only.
+`get_project_context`, `get_project_section`, `list_worktrees` and `get_health` take the `id` returned
+by `list_projects` or `find_project`.
 
 ## Documentation
 

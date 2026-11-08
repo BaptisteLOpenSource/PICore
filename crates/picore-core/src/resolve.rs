@@ -1,5 +1,5 @@
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 use crate::model::{Project, Worktree, project_dir};
@@ -8,6 +8,21 @@ use crate::model::{Project, Worktree, project_dir};
 pub struct Target<'a> {
     pub project: &'a Project,
     pub worktree: Option<&'a Worktree>,
+}
+
+impl Target<'_> {
+    /// Matched Worktree, else main work tree, else first linked Worktree.
+    pub fn dir(&self) -> Option<&Path> {
+        self.worktree
+            .map(|w| w.path.as_path())
+            .or(self.project.work_tree.as_deref())
+            .or_else(|| {
+                self.project
+                    .linked_worktrees()
+                    .next()
+                    .map(|w| w.path.as_path())
+            })
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -29,10 +44,14 @@ impl<'a> Resolution<'a> {
     }
 }
 
-/// Path (`/`, `~`, `.`), `name@N` (Worktree of issue N), or case-insensitive
+/// Path (`/`, `~`, `.`, `..`, `./`, `../`), `name@N` (Worktree of issue N), or case-insensitive
 /// `name` / `parent/name`.
 pub fn resolve<'a>(projects: &'a [Project], query: &str) -> Resolution<'a> {
-    if query.starts_with(['/', '~', '.']) {
+    if query.starts_with(['/', '~'])
+        || matches!(query, "." | "..")
+        || query.starts_with("../")
+        || query.starts_with("./")
+    {
         return by_path(projects, query);
     }
     if let Some((name, n)) = query.rsplit_once('@')
@@ -237,6 +256,33 @@ mod tests {
         assert_eq!(t.worktree.unwrap().branch.as_deref(), Some("80-b"));
         assert_eq!(resolve(&ps, "api@7"), Resolution::None);
         assert_eq!(resolve(&ps, "api@99999999999"), Resolution::None);
+    }
+
+    #[test]
+    fn dot_prefixed_name_resolves_by_name() {
+        let ps = [project("/src/.dotfiles")];
+        let Resolution::One(t) = resolve(&ps, ".dotfiles") else {
+            panic!("expected One");
+        };
+        assert_eq!(t.project.name, ".dotfiles");
+    }
+
+    #[test]
+    fn dir_falls_back_to_first_linked_worktree_when_bare() {
+        let mut p = issue_project("/src/api", &["main", "12-a"]);
+        p.work_tree = None;
+        p.worktrees[0].is_main = true;
+        let t = Target {
+            project: &p,
+            worktree: None,
+        };
+        assert_eq!(t.dir(), Some(p.worktrees[1].path.as_path()));
+        p.worktrees.truncate(1);
+        let t = Target {
+            project: &p,
+            worktree: None,
+        };
+        assert_eq!(t.dir(), None);
     }
 
     #[test]

@@ -78,3 +78,19 @@ fn scan_reads_origin_repo() {
     .unwrap();
     assert_eq!(project(r.path()).repo.as_deref(), Some("o/n"));
 }
+
+#[test]
+fn bare_project_dir_is_first_linked_worktree() {
+    let r = TestRepo::bare_with_worktree();
+    let wt = r.tmp().join("wt");
+    r.add_worktree(&wt, "feat");
+    let ps = [project_at(r.path())];
+    let Resolution::One(t) = resolve(&ps, "bare") else {
+        panic!("expected One");
+    };
+    assert_eq!(t.dir(), Some(wt.canonicalize().unwrap().as_path()));
+}
+
+fn project_at(git_dir: &std::path::Path) -> Project {
+    scan(&ProjectId(git_dir.canonicalize().unwrap())).unwrap()
+}

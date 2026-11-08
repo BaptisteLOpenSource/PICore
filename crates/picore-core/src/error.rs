@@ -12,6 +12,8 @@ pub enum Error {
     Store(#[from] rusqlite::Error),
     #[error(transparent)]
     Io(#[from] io::Error),
+    #[error("gh: {0}")]
+    Gh(String),
     #[error("config: {0}")]
     Config(String),
     #[error("not found: {0}")]

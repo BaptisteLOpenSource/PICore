@@ -63,6 +63,7 @@ fn man() -> Result<ExitCode> {
 fn code_of(e: &Error) -> &'static str {
     match e {
         Error::Proc(_) => "git",
+        Error::Gh(_) => "gh",
         Error::Config(_) => "config",
         Error::NotFound(_) => "not_found",
         Error::Ambiguous(_) => "ambiguous",
@@ -286,16 +287,12 @@ fn target_dir(
     projects: &[Project],
     name: &str,
 ) -> Result<std::result::Result<PathBuf, ExitCode>> {
-    let Target { project, worktree } = target(json, projects, name)?;
-    let dir = worktree
-        .map(|w| w.path.clone())
-        .or_else(|| project.work_tree.clone())
-        .or_else(|| project.linked_worktrees().next().map(|w| w.path.clone()));
-    Ok(dir.ok_or_else(|| {
+    let t = target(json, projects, name)?;
+    Ok(t.dir().map(Path::to_path_buf).ok_or_else(|| {
         fail(
             json,
             "refused",
-            &format!("{}: no worktree to open", project.name),
+            &format!("{}: no worktree", t.project.name),
             &[],
         )
     }))
