@@ -38,6 +38,12 @@ pub enum Cmd {
     Path {
         query: String,
     },
+    /// Print the canonical branch and Worktree path for an issue (writes nothing)
+    WtName {
+        issue: u32,
+        /// Project query, default: current directory
+        project: Option<String>,
+    },
     /// Print shell function `pcd` (cd to a Project or Worktree)
     Init {
         shell: InitShell,

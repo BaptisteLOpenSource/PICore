@@ -77,7 +77,8 @@ fn stdio_lists_tools() {
             "get_project_context",
             "get_project_section",
             "list_projects",
-            "list_worktrees"
+            "list_worktrees",
+            "worktree_name"
         ]
     );
 }

@@ -38,6 +38,13 @@ struct FindArg {
     query: String,
 }
 
+#[derive(Deserialize, JsonSchema)]
+struct WtNameArg {
+    /// Project name, `parent/name`, `name@<issue>`, or a path inside a Project or Worktree
+    project: String,
+    issue: u32,
+}
+
 struct Handler(Server);
 
 const UNTRUSTED_NOTICE: &str =
@@ -65,6 +72,13 @@ impl Handler {
     )]
     fn find_project(&self, Parameters(a): Parameters<FindArg>) -> Result<String, String> {
         text(self.0.find_project(&a.query))
+    }
+
+    #[tool(
+        description = "Canonical branch `<issue>-<slug>` and Worktree path for a GitHub issue, from its title via gh. Writes nothing."
+    )]
+    fn worktree_name(&self, Parameters(a): Parameters<WtNameArg>) -> Result<String, String> {
+        text(self.0.worktree_name(&a.project, a.issue))
     }
 
     #[tool(

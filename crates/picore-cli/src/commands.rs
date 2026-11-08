@@ -16,6 +16,7 @@ use picore_core::prune::{self, Assessment, Blocker, Verdict};
 use picore_core::refresh::{index_all, refresh_all};
 use picore_core::resolve::{Resolution, qualified, resolve};
 use picore_core::store::Index;
+use picore_core::wtname;
 use serde::Serialize;
 
 use crate::output::{emit, fail, mascot};
@@ -31,6 +32,7 @@ pub fn run(json: bool, quiet: bool, cmd: &Cmd) -> ExitCode {
         Cmd::Gui => gui(json),
         Cmd::Open { name } => open(json, name),
         Cmd::Path { query } => path_cmd(json, query),
+        Cmd::WtName { issue, project } => wt_name(json, *issue, project.as_deref()),
         Cmd::Init { shell } => init(*shell),
         Cmd::Status { name, remote } => status(json, name.as_deref(), *remote),
         Cmd::Worktrees { name } => worktrees(json, name.as_deref()),
@@ -270,6 +272,18 @@ fn path_cmd(json: bool, name: &str) -> Result<ExitCode> {
     emit(json, &PathReport { path: &path }, |r| {
         println!("{}", r.path.display())
     });
+    Ok(ExitCode::SUCCESS)
+}
+
+fn wt_name(json: bool, issue: u32, project: Option<&str>) -> Result<ExitCode> {
+    let projects = refreshed(&Paths::from_env()?)?;
+    let query = match project {
+        Some(q) => q.to_owned(),
+        None => env::current_dir()?.to_string_lossy().into_owned(),
+    };
+    let p = one(resolve(&projects, &query), &query)?;
+    let name = wtname::for_issue(project_dir(&p.id), issue)?;
+    emit(json, &name, |n| println!("{}\n{}", n.branch, n.path));
     Ok(ExitCode::SUCCESS)
 }
 

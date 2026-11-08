@@ -12,6 +12,7 @@ use picore_core::prune::{self, Assessment};
 use picore_core::refresh::{refresh, refresh_all};
 use picore_core::resolve::{Resolution, qualified, resolve};
 use picore_core::store::Index;
+use picore_core::wtname;
 use serde_json::{Value, json};
 
 const HEALTH_TTL: Duration = Duration::from_secs(10);
@@ -41,6 +42,18 @@ impl Server {
 
     fn product_of(&self, p: &Project) -> Option<&str> {
         self.cfg.product_of(project_dir(&p.id))
+    }
+
+    pub fn worktree_name(&self, query: &str, issue: u32) -> Result<Value> {
+        let (projects, _) = refresh_all(&self.index.lock().unwrap())?;
+        let p = match resolve(&projects, query) {
+            Resolution::One(t) => t.project,
+            Resolution::Many(hits) => {
+                return Err(Error::Ambiguous(hits.into_iter().map(qualified).collect()));
+            }
+            Resolution::None => return Err(Error::NotFound(query.into())),
+        };
+        Ok(json!(wtname::for_issue(project_dir(&p.id), issue)?))
     }
 
     pub fn list_projects(&self) -> Result<Value> {

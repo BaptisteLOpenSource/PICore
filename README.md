@@ -85,6 +85,10 @@ picore init fish | source        # fish; zsh/bash: eval "$(picore init zsh)"
 pcd room-booking/backend && claude
 ```
 
+`picore wt-name <issue> [project]` prints the canonical branch (`<issue>-<slug>`) and Worktree
+path (`<project>.worktrees/<issue>-<slug>`) from the issue title, fetched with `gh` inside the
+Project. It creates nothing; the project defaults to the current directory.
+
 Config and Index live in XDG paths: `~/.config/picore/config.toml` and
 `~/.local/share/picore/picore.db`. Set `PICORE_CONFIG_DIR` and `PICORE_DATA_DIR` to override.
 
@@ -157,7 +161,7 @@ Or in any MCP client config:
 Upgrading from `picore-mcp`: the binary is gone. Replace the command with `picore` and the args with `["mcp"]`.
 
 Tools: `list_projects`, `find_project`, `get_project_context`, `get_project_section`,
-`list_worktrees`, `get_health`. `find_project` takes a name, `parent/name`, `name@<issue>`
+`list_worktrees`, `get_health`, `worktree_name` (`project`, `issue`). `find_project` takes a name, `parent/name`, `name@<issue>`
 (the Worktree on branch `<issue>-...`) or a path inside a Project or Worktree. Project context is read from `README.md`, `CLAUDE.md` and `AGENTS.md` only.
 Pass the `id` returned by `list_projects` as the `project` argument.
 
