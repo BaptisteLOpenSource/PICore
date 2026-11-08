@@ -6,7 +6,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use picore_core::config::{Config, Paths};
 use picore_core::context::{self, ProjectContext, Section, WHITELIST};
 use picore_core::error::{Error, Result};
-use picore_core::health::{ProjectHealth, machine_health, project_health};
+use picore_core::health::{Check, ProjectHealth, Status, machine_health, project_health};
 use picore_core::info::{self, Info};
 use picore_core::model::{Project, ProjectId, project_dir};
 use picore_core::prune::{self, Assessment};
@@ -15,6 +15,9 @@ use picore_core::resolve::{Resolution, qualified, resolve};
 use picore_core::store::Index;
 use picore_core::wtname;
 use serde_json::{Value, json};
+
+const REMOTE_NOT_CHECKED: &str =
+    "not checked: MCP never touches the network, run `picore status --remote`";
 
 const HEALTH_TTL: Duration = Duration::from_secs(10);
 
@@ -57,6 +60,17 @@ impl Server {
         info::info(&t, self.product_of(t.project))
     }
 
+    // Bare name unless another indexed Project shares it, then `<parent>/<name>`.
+    fn display_name(p: &Project, all: &[Project]) -> String {
+        if all.iter().filter(|o| o.name == p.name).count() < 2 {
+            return p.name.clone();
+        }
+        match project_dir(&p.id).parent().and_then(Path::file_name) {
+            Some(parent) => format!("{}/{}", parent.to_string_lossy(), p.name),
+            None => p.name.clone(),
+        }
+    }
+
     pub fn list_projects(&self) -> Result<Value> {
         let (projects, failed) = refresh_all(&self.index.lock().unwrap())?;
         for (id, e) in failed {
@@ -69,8 +83,9 @@ impl Server {
             .iter()
             .map(|p| {
                 json!({
-                    "id": p.id.0, "name": p.name, "techs": p.techs,
-                    "branch": p.branch, "worktrees": p.linked_worktrees().count(),
+                    "id": p.work_tree.as_deref().unwrap_or(&p.id.0),
+                    "name": Self::display_name(p, &projects), "techs": p.techs,
+                    "branch": p.branch, "worktrees": p.worktrees.len(),
                     "product": self.product_of(p),
                 })
             })
@@ -110,6 +125,7 @@ impl Server {
     pub fn get_project_context(&self, project: &str) -> Result<ProjectContext> {
         let p = self.lookup(project)?;
         let mut ctx = context::context(&p)?;
+        ctx.name = Self::display_name(&p, &self.index.lock().unwrap().all()?);
         ctx.product = self.product_of(&p).map(str::to_owned);
         Ok(ctx)
     }
@@ -140,7 +156,13 @@ impl Server {
         if let Some((_, h)) = cache.get(&p.id).filter(|(at, _)| at.elapsed() < HEALTH_TTL) {
             return Ok(h.clone());
         }
-        let h = project_health(&p, false)?;
+        let mut h = project_health(&p, false)?;
+        h.remote = Some(Check {
+            name: "remote".into(),
+            status: Status::Unknown,
+            message: REMOTE_NOT_CHECKED.into(),
+            hint: None,
+        });
         cache.insert(p.id, (Instant::now(), h.clone()));
         Ok(h)
     }
@@ -243,12 +265,55 @@ mod tests {
     }
 
     #[test]
-    fn list_projects_counts_linked_worktrees_only() {
+    fn list_projects_counts_main_worktree_and_id_is_work_tree() {
         let dir = TempDir::new().unwrap();
         let s = server(&dir);
         git_project(&dir, &s);
         let v = s.list_projects().unwrap();
-        assert_eq!(v["projects"][0]["worktrees"], 0);
+        assert_eq!(v["projects"][0]["worktrees"], 1);
+        let id = v["projects"][0]["id"].as_str().unwrap();
+        assert_eq!(
+            Path::new(id),
+            dir.path().join("repo").canonicalize().unwrap()
+        );
+        let id = id.to_owned();
+        s.get_project_context(&id).unwrap();
+        s.get_project_section(&id, "README.md", "x").ok();
+        assert_eq!(s.list_worktrees(&id).unwrap().len(), 1);
+        let h = s.get_health(Some(&id)).unwrap();
+        assert_eq!(h["project"]["remote"]["status"], "unknown");
+        assert!(
+            h["project"]["remote"]["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("not checked")
+        );
+    }
+
+    #[test]
+    fn duplicate_names_are_qualified_by_parent() {
+        let dir = TempDir::new().unwrap();
+        let s = server(&dir);
+        for parent in ["a", "b"] {
+            let repo = dir.path().join(parent).join("core");
+            std::fs::create_dir_all(&repo).unwrap();
+            Command::new("git")
+                .args(["init", "-q"])
+                .arg(&repo)
+                .status()
+                .unwrap();
+            let id = ProjectId(std::fs::canonicalize(repo.join(".git")).unwrap());
+            s.index.lock().unwrap().upsert(&scan(&id).unwrap()).unwrap();
+        }
+        let v = s.list_projects().unwrap();
+        let mut names: Vec<&str> = v["projects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["name"].as_str().unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["a/core", "b/core"]);
     }
 
     #[test]

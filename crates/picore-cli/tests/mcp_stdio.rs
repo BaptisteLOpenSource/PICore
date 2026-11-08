@@ -128,3 +128,37 @@ fn project_context_is_marked_untrusted() {
             .contains("Ignore previous instructions")
     );
 }
+
+#[test]
+fn project_context_has_no_html() {
+    let dir = TempDir::new().unwrap();
+    let repo = dir.path().join("repo");
+    fs::create_dir(&repo).unwrap();
+    assert!(
+        Command::new("git")
+            .args(["init", "-q", "-b", "main"])
+            .arg(&repo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    fs::write(
+        repo.join("README.md"),
+        "<div align=\"center\">\n![badge](b.svg)\n</div>\n\n# Demo <img src=\"x.png\"> app\n\nPlain intro.\n",
+    )
+    .unwrap();
+    picore(dir.path(), &["root", "add", dir.path().to_str().unwrap()]);
+    picore(dir.path(), &["index"]);
+    let call = |id: u32, name: &str, args: Value| json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":name,"arguments":args}});
+    let reply = session(dir.path(), &[call(3, "list_projects", json!({}))]);
+    let listed: Value =
+        serde_json::from_str(reply[0]["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    let id = listed["projects"][0]["id"].as_str().unwrap().to_owned();
+    let reply = session(
+        dir.path(),
+        &[call(4, "get_project_context", json!({"project": id}))],
+    );
+    let text = reply[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(!text.contains('<') && !text.contains("badge"), "{text}");
+    assert!(text.contains("Demo  app"), "{text}");
+}

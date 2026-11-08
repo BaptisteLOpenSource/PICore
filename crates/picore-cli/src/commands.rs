@@ -220,7 +220,7 @@ fn print_table(listed: &[Listed]) {
                     format!("{indent}{}", p.name),
                     l.product.unwrap_or("-").into(),
                     p.branch.clone().unwrap_or_else(|| "-".into()),
-                    p.linked_worktrees().count().to_string(),
+                    p.worktrees.len().to_string(),
                     if p.techs.is_empty() {
                         "-".into()
                     } else {

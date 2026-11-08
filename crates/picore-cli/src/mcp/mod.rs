@@ -62,7 +62,9 @@ fn untrusted<T: serde::Serialize>(r: picore_core::error::Result<T>) -> Result<St
 
 #[tool_router(server_handler)]
 impl Handler {
-    #[tool(description = "List indexed Projects with branch, techs and Worktree count")]
+    #[tool(
+        description = "List indexed Projects. `id` is the Project work tree path: pass it as `project` to every other tool. `worktrees` counts all Worktrees including the main one. `name` is `<parent>/<name>` when the bare name is not unique."
+    )]
     fn list_projects(&self) -> Result<String, String> {
         text(self.0.list_projects())
     }
@@ -102,12 +104,16 @@ impl Handler {
         untrusted(self.0.get_project_section(&a.project, &a.file, &a.heading))
     }
 
-    #[tool(description = "Worktrees of a Project with prune verdict and staleness")]
+    #[tool(
+        description = "Worktrees of a Project, main included, with prune verdict. `stale` = last commit older than the configured stale_days; false when the date is unknown (e.g. Missing directory), and says nothing about whether the Worktree is prunable."
+    )]
     fn list_worktrees(&self, Parameters(a): Parameters<ProjectArg>) -> Result<String, String> {
         text(self.0.list_worktrees(&a.project))
     }
 
-    #[tool(description = "Machine Health Checks, plus Project health when a project is given")]
+    #[tool(
+        description = "Machine Health Checks, plus Project health when a project is given. Project `remote` is always status unknown with a reason: MCP never touches the network, use `picore status --remote`."
+    )]
     fn get_health(&self, Parameters(a): Parameters<HealthArg>) -> Result<String, String> {
         text(self.0.get_health(a.project.as_deref()))
     }

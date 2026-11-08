@@ -105,6 +105,49 @@ fn heading_text(rest: &str) -> &str {
     }
 }
 
+// Drops HTML comments, tags and markdown images; link text stays.
+pub fn strip_markup(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find(['<', '!']) {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        let skip = if let Some(r) = rest.strip_prefix("<!--") {
+            r.find("-->").map_or(rest.len(), |e| 4 + e + 3)
+        } else if rest.starts_with('<')
+            && rest[1..].starts_with(|c: char| c.is_ascii_alphabetic() || c == '/')
+        {
+            rest.find('>').map_or(0, |e| e + 1)
+        } else if rest.starts_with("![") {
+            rest.find("](")
+                .and_then(|a| rest[a..].find(')').map(|b| a + b + 1))
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        if skip == 0 {
+            out.push_str(&rest[..1]);
+        }
+        rest = &rest[skip.max(1)..];
+    }
+    out.push_str(rest);
+    let mut clean = String::with_capacity(out.len());
+    let mut rest = out.as_str();
+    while let Some(i) = rest.find("[](") {
+        clean.push_str(&rest[..i]);
+        rest = &rest[i..];
+        rest = rest.find(')').map_or(&rest[1..], |e| &rest[e + 1..]);
+    }
+    clean.push_str(rest);
+    let mut lines: Vec<&str> = Vec::new();
+    for l in clean.lines().map(str::trim_end) {
+        if !(l.is_empty() && lines.last().is_none_or(|p| p.is_empty())) {
+            lines.push(l);
+        }
+    }
+    lines.join("\n").trim().to_owned()
+}
+
 fn cut(s: String, max: usize) -> (String, bool) {
     if s.len() <= max {
         return (s, false);
@@ -135,14 +178,14 @@ pub fn outline(md: &str) -> (String, bool, Vec<Heading>, bool) {
             if headings.len() < OUTLINE_MAX {
                 headings.push(Heading {
                     level,
-                    text: text.to_owned(),
+                    text: strip_markup(text),
                 });
             } else {
                 headings_truncated = true;
             }
         }
     }
-    let (intro, intro_truncated) = cut(intro, INTRO_MAX);
+    let (intro, intro_truncated) = cut(strip_markup(&intro), INTRO_MAX);
     (intro, intro_truncated, headings, headings_truncated)
 }
 
@@ -151,7 +194,9 @@ pub fn section_of(md: &str, heading: &str) -> Option<Section> {
     let mut level = None;
     for line in lines(md) {
         match (level, line.heading) {
-            (None, Some((lvl, text))) if text == heading => level = Some(lvl),
+            (None, Some((lvl, text))) if text == heading || strip_markup(text) == heading => {
+                level = Some(lvl)
+            }
             (Some(open), Some((lvl, _))) if lvl <= open => break,
             (Some(_), _) => {
                 body.push_str(line.raw);
@@ -242,6 +287,28 @@ mod tests {
         let (intro, truncated, _, _) = outline(&md);
         assert!(intro.len() <= INTRO_MAX);
         assert!(truncated);
+    }
+
+    #[test]
+    fn strip_markup_removes_html_images_and_badges() {
+        let md = "<div align=\"center\">\n<!-- hidden\nbadge -->\n[![CI](https://x/ci.svg)](https://x)\n![logo](l.png)\n</div>\n\n\n# PICore <img src=\"a.png\"> tool\nSee [docs](https://d) a < b! ok";
+        assert_eq!(
+            strip_markup(md),
+            "# PICore  tool\nSee [docs](https://d) a < b! ok"
+        );
+    }
+
+    #[test]
+    fn outline_and_section_use_stripped_text() {
+        let md = "# A <b>x</b>\n<p>hi</p>\n## Use ![b](u.png) it\nbody";
+        let (intro, _, headings, _) = outline(md);
+        assert!(!intro.contains('<'));
+        assert_eq!(headings[0].text, "A x");
+        assert_eq!(headings[1].text, "Use  it");
+        assert_eq!(
+            section_of(md, &headings[1].text).unwrap().text.trim(),
+            "body"
+        );
     }
 
     #[test]
