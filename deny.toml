@@ -15,6 +15,7 @@ allow = [
     "Zlib", # foldhash
     "CC0-1.0", # notify
     "Apache-2.0 WITH LLVM-exception", # target-lexicon
+    "CDLA-Permissive-2.0", # webpki-root-certs, pulled by axoupdater
 ]
 
 [bans]
