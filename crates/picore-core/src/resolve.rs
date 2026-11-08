@@ -26,10 +26,12 @@ pub fn resolve<'a>(projects: &'a [Project], query: &str) -> Resolution<'a> {
         && !n.is_empty()
         && n.bytes().all(|b| b.is_ascii_digit())
     {
+        let Ok(issue) = n.parse::<u32>() else {
+            return Resolution::None;
+        };
         return match by_name(projects, name) {
             Resolution::One(t) => {
-                let issue = n.parse().ok();
-                let worktree = t.project.worktrees.iter().find(|w| w.issue == issue);
+                let worktree = t.project.worktrees.iter().find(|w| w.issue == Some(issue));
                 worktree.map_or(Resolution::None, |w| {
                     Resolution::One(Target {
                         worktree: Some(w),
@@ -221,6 +223,7 @@ mod tests {
         };
         assert_eq!(t.worktree.unwrap().branch.as_deref(), Some("80-b"));
         assert_eq!(resolve(&ps, "api@7"), Resolution::None);
+        assert_eq!(resolve(&ps, "api@99999999999"), Resolution::None);
     }
 
     #[test]
