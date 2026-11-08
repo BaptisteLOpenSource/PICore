@@ -31,7 +31,8 @@ fn git(cwd: &Path, args: &[&str]) -> Result<String> {
 }
 
 fn git_with(cwd: &Path, config: &[&str], args: &[&str]) -> Result<String> {
-    let mut full = vec!["-c", "core.fsmonitor=false"];
+    // No optional locks: status would rewrite a stale index inside the Project.
+    let mut full = vec!["--no-optional-locks", "-c", "core.fsmonitor=false"];
     for c in config {
         full.extend(["-c", c]);
     }
@@ -118,7 +119,14 @@ pub fn status(work_tree: &Path) -> Result<StatusSummary> {
     Ok(parse_status(&git_with(
         work_tree,
         &config,
-        &["status", "--porcelain=v2", "--branch", "-z"],
+        // filter_blanks cannot reach submodule configs: do not enter them.
+        &[
+            "status",
+            "--porcelain=v2",
+            "--branch",
+            "-z",
+            "--ignore-submodules=all",
+        ],
     )?))
 }
 
@@ -256,6 +264,9 @@ pub fn ls_remote(work_tree: &Path) -> Result<()> {
 }
 
 pub fn remove_worktree(repo: &Path, path: &Path, force: bool) -> Result<()> {
+    // worktree remove runs status inside the worktree: blank its filters too.
+    let filters = filter_blanks(path)?;
+    let config: Vec<&str> = filters.iter().map(String::as_str).collect();
     let path = path
         .to_str()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "non-UTF-8 worktree path"))?;
@@ -264,7 +275,7 @@ pub fn remove_worktree(repo: &Path, path: &Path, force: bool) -> Result<()> {
     } else {
         vec!["worktree", "remove", path]
     };
-    git(repo, &args).map(|_| ())
+    git_with(repo, &config, &args).map(|_| ())
 }
 
 pub fn prune_worktrees(repo: &Path) -> Result<()> {
