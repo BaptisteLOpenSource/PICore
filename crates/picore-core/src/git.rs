@@ -170,7 +170,13 @@ pub fn parse_repo(url: &str) -> Option<String> {
     let mut parts = path.rsplit('/').filter(|s| !s.is_empty());
     let name = parts.next()?;
     let owner = parts.next()?;
-    Some(format!("{owner}/{name}"))
+    // slug reaches `gh repo view`: a leading `-` would parse as a flag
+    let sane = |s: &str| {
+        !s.starts_with('-')
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+    };
+    (sane(owner) && sane(name)).then(|| format!("{owner}/{name}"))
 }
 
 pub fn origin_repo(repo: &Path) -> Result<Option<String>> {
@@ -332,6 +338,11 @@ mod tests {
             ("https://gitlab.com/g/sub/n.git", Some("sub/n")),
             ("/srv/git/n.git", None),
             ("", None),
+            ("git@h:--web/x", None),
+            ("https://github.com/-x/y", None),
+            ("https://github.com/o/-y", None),
+            ("https://github.com/o/a b", None),
+            ("git@github.com:o/n.js.git", Some("o/n.js")),
         ] {
             assert_eq!(super::parse_repo(url).as_deref(), want, "{url}");
         }
