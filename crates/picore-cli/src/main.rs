@@ -44,6 +44,10 @@ pub enum Cmd {
         /// Project query, default: current directory
         project: Option<String>,
     },
+    /// Name, path, branch, tags and GitHub metadata of a Project or Worktree
+    Info {
+        query: String,
+    },
     /// Print shell function `pcd` (cd to a Project or Worktree)
     Init {
         shell: InitShell,

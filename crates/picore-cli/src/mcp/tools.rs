@@ -7,6 +7,7 @@ use picore_core::config::{Config, Paths};
 use picore_core::context::{self, ProjectContext, Section, WHITELIST};
 use picore_core::error::{Error, Result};
 use picore_core::health::{ProjectHealth, machine_health, project_health};
+use picore_core::info::{self, Info};
 use picore_core::model::{Project, ProjectId, project_dir};
 use picore_core::prune::{self, Assessment};
 use picore_core::refresh::{refresh, refresh_all};
@@ -46,14 +47,14 @@ impl Server {
 
     pub fn worktree_name(&self, query: &str, issue: u32) -> Result<Value> {
         let (projects, _) = refresh_all(&self.index.lock().unwrap())?;
-        let p = match resolve(&projects, query) {
-            Resolution::One(t) => t.project,
-            Resolution::Many(hits) => {
-                return Err(Error::Ambiguous(hits.into_iter().map(qualified).collect()));
-            }
-            Resolution::None => return Err(Error::NotFound(query.into())),
-        };
+        let p = resolve(&projects, query).into_target(query)?.project;
         Ok(json!(wtname::for_issue(project_dir(&p.id), issue)?))
+    }
+
+    pub fn get_repo_info(&self, query: &str) -> Result<Info> {
+        let (projects, _) = refresh_all(&self.index.lock().unwrap())?;
+        let t = resolve(&projects, query).into_target(query)?;
+        info::info(&t, self.product_of(t.project))
     }
 
     pub fn list_projects(&self) -> Result<Value> {

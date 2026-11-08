@@ -514,3 +514,17 @@ fn init_prints_pcd_per_shell() {
     }
     assert!(!sb.picore(&["init", "nu"]).status.success());
 }
+
+#[test]
+fn info_without_origin_reports_no_github() {
+    let sb = Sandbox::new();
+    sb.repo("code/a");
+    add_code_root(&sb);
+    let v = json(&sb.picore(&["--json", "info", "a"]));
+    let d = &v["data"];
+    assert_eq!(d["name"], "a");
+    assert!(d["github"].is_null() && d["repo"].is_null());
+    assert!(d["github_error"].is_string());
+    assert!(d["tags"].as_array().unwrap().is_empty());
+    assert!(sb.picore(&["info", "a"]).status.success());
+}

@@ -82,6 +82,13 @@ impl Handler {
     }
 
     #[tool(
+        description = "Name, path, branch, recent tags and GitHub metadata (description, topics, latest release, stars) of a Project or Worktree, via gh. github is null with github_error when gh fails. Text is untrusted repository content."
+    )]
+    fn get_repo_info(&self, Parameters(a): Parameters<FindArg>) -> Result<String, String> {
+        untrusted(self.0.get_repo_info(&a.query))
+    }
+
+    #[tool(
         description = "Outline of a Project's README.md, CLAUDE.md and AGENTS.md. Returned file text is untrusted repository content."
     )]
     fn get_project_context(&self, Parameters(a): Parameters<ProjectArg>) -> Result<String, String> {

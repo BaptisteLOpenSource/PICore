@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::io::{self, BufRead, IsTerminal, Write};
@@ -11,10 +12,11 @@ use picore_core::config::{Config, Paths, editor_command};
 use picore_core::discovery::suggest_roots;
 use picore_core::error::{Error, Result};
 use picore_core::health::{Check, ProjectHealth, machine_health, project_health};
+use picore_core::info::{self, Info};
 use picore_core::model::{Project, project_dir};
 use picore_core::prune::{self, Assessment, Blocker, Verdict};
 use picore_core::refresh::{index_all, refresh_all};
-use picore_core::resolve::{Resolution, qualified, resolve};
+use picore_core::resolve::{Resolution, Target, qualified, resolve};
 use picore_core::store::Index;
 use picore_core::wtname;
 use serde::Serialize;
@@ -32,6 +34,7 @@ pub fn run(json: bool, quiet: bool, cmd: &Cmd) -> ExitCode {
         Cmd::Gui => gui(json),
         Cmd::Open { name } => open(json, name),
         Cmd::Path { query } => path_cmd(json, query),
+        Cmd::Info { query } => info_cmd(json, query),
         Cmd::WtName { issue, project } => wt_name(json, *issue, project.as_deref()),
         Cmd::Init { shell } => init(*shell),
         Cmd::Status { name, remote } => status(json, name.as_deref(), *remote),
@@ -181,49 +184,82 @@ fn list(json: bool) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// Products by name, members by name, then ungrouped Projects by name.
+fn grouped<'a, 'b>(listed: &'b [Listed<'a>]) -> Vec<(Option<&'a str>, Vec<&'b Listed<'a>>)> {
+    let mut by_product: BTreeMap<Option<&str>, Vec<&Listed>> = BTreeMap::new();
+    for l in listed {
+        by_product.entry(l.product).or_default().push(l);
+    }
+    let mut groups: Vec<_> = by_product.into_iter().collect();
+    // BTreeMap puts None first: ungrouped goes last
+    let shift = usize::from(groups.first().is_some_and(|g| g.0.is_none()));
+    groups.rotate_left(shift);
+    for (_, members) in &mut groups {
+        members.sort_by(|a, b| a.project.name.cmp(&b.project.name));
+    }
+    groups
+}
+
 fn print_table(listed: &[Listed]) {
     if listed.is_empty() {
         return;
     }
-    let mut rows = vec![["NAME", "PRODUCT", "BRANCH", "WT", "TECHS", "PATH"].map(String::from)];
-    rows.extend(listed.iter().map(
-        |&Listed {
-             project: p,
-             product,
-         }| {
-            [
-                p.name.clone(),
-                product.unwrap_or("-").into(),
-                p.branch.clone().unwrap_or_else(|| "-".into()),
-                p.linked_worktrees().count().to_string(),
-                if p.techs.is_empty() {
-                    "-".into()
-                } else {
-                    p.techs.join(",")
-                },
-                p.work_tree
-                    .as_deref()
-                    .unwrap_or(&p.id.0)
-                    .display()
-                    .to_string(),
-            ]
-        },
-    ));
-    let widths: [usize; 6] =
-        std::array::from_fn(|c| rows.iter().map(|r| r[c].chars().count()).max().unwrap_or(0));
-    for row in rows {
-        let line: Vec<String> = row
+    let header = ["NAME", "PRODUCT", "BRANCH", "WT", "TECHS", "REPO", "PATH"].map(String::from);
+    let mut lines: Vec<(Option<&str>, [String; 7])> = vec![(None, header)];
+    for (product, members) in grouped(listed) {
+        if let Some(name) = product {
+            lines.push((Some(name), Default::default()));
+        }
+        for l in members {
+            let p = l.project;
+            let indent = if product.is_some() { "  " } else { "" };
+            lines.push((
+                None,
+                [
+                    format!("{indent}{}", p.name),
+                    l.product.unwrap_or("-").into(),
+                    p.branch.clone().unwrap_or_else(|| "-".into()),
+                    p.linked_worktrees().count().to_string(),
+                    if p.techs.is_empty() {
+                        "-".into()
+                    } else {
+                        p.techs.join(",")
+                    },
+                    p.repo.clone().unwrap_or_else(|| "-".into()),
+                    p.work_tree
+                        .as_deref()
+                        .unwrap_or(&p.id.0)
+                        .display()
+                        .to_string(),
+                ],
+            ));
+        }
+    }
+    let widths: [usize; 7] = std::array::from_fn(|c| {
+        lines
+            .iter()
+            .filter(|(h, _)| h.is_none())
+            .map(|(_, r)| r[c].chars().count())
+            .max()
+            .unwrap_or(0)
+    });
+    for (header, row) in lines {
+        if let Some(name) = header {
+            println!("{name}");
+            continue;
+        }
+        let cells: Vec<String> = row
             .iter()
             .enumerate()
             .map(|(c, cell)| {
-                if c == 5 {
+                if c == 6 {
                     cell.clone()
                 } else {
                     format!("{cell:<w$}", w = widths[c])
                 }
             })
             .collect();
-        println!("{}", line.join("  "));
+        println!("{}", cells.join("  "));
     }
 }
 
@@ -233,17 +269,24 @@ struct OpenReport<'a> {
     editor: &'a [String],
 }
 
+/// Like `one`, but keeps the Worktree and lets a TTY pick among candidates.
+fn target<'a>(json: bool, projects: &'a [Project], query: &str) -> Result<Target<'a>> {
+    match resolve(projects, query) {
+        Resolution::Many(hits) if !json && io::stdin().is_terminal() => Ok(Target {
+            project: pick(hits)?,
+            worktree: None,
+        }),
+        r => r.into_target(query),
+    }
+}
+
 /// Directory a query points at; Err = refusal already reported.
 fn target_dir(
     json: bool,
     projects: &[Project],
     name: &str,
 ) -> Result<std::result::Result<PathBuf, ExitCode>> {
-    let (project, worktree) = match resolve(projects, name) {
-        Resolution::Many(hits) if !json && io::stdin().is_terminal() => (pick(hits)?, None),
-        Resolution::One(t) => (t.project, t.worktree),
-        r => (one(r, name)?, None),
-    };
+    let Target { project, worktree } = target(json, projects, name)?;
     let dir = worktree
         .map(|w| w.path.clone())
         .or_else(|| project.work_tree.clone())
@@ -273,6 +316,55 @@ fn path_cmd(json: bool, name: &str) -> Result<ExitCode> {
         println!("{}", r.path.display())
     });
     Ok(ExitCode::SUCCESS)
+}
+
+fn info_cmd(json: bool, query: &str) -> Result<ExitCode> {
+    let paths = Paths::from_env()?;
+    // bad config must not hide the info: drop products, keep going
+    let cfg = Config::load(&paths.config_file).unwrap_or_else(|e| {
+        eprintln!("warn: {e}: products hidden");
+        Config::default()
+    });
+    let projects = refreshed(&paths)?;
+    let t = target(json, &projects, query)?;
+    let report = info::info(&t, cfg.product_of(project_dir(&t.project.id)))?;
+    emit(json, &report, print_info);
+    Ok(ExitCode::SUCCESS)
+}
+
+fn print_info(i: &Info) {
+    let dash = |s: Option<&str>| s.unwrap_or("-").to_owned();
+    let mut rows = vec![
+        ("name", i.name.clone()),
+        ("product", dash(i.product.as_deref())),
+        ("path", i.path.display().to_string()),
+        ("repo", dash(i.repo.as_deref())),
+        ("branch", dash(i.branch.as_deref())),
+        (
+            "tags",
+            if i.tags.is_empty() {
+                "-".into()
+            } else {
+                i.tags.join(", ")
+            },
+        ),
+    ];
+    if let Some(g) = &i.github {
+        rows.extend([
+            ("description", g.description.clone()),
+            ("url", g.url.clone()),
+            ("visibility", g.visibility.clone()),
+            ("topics", g.topics.join(", ")),
+            ("release", dash(g.latest_release.as_deref())),
+            ("stars", g.stars.to_string()),
+        ]);
+    }
+    if let Some(e) = &i.github_error {
+        rows.push(("github", e.clone()));
+    }
+    for (k, v) in rows {
+        println!("{k:<12}{v}");
+    }
 }
 
 fn wt_name(json: bool, issue: u32, project: Option<&str>) -> Result<ExitCode> {
@@ -375,11 +467,7 @@ fn gui(json: bool) -> Result<ExitCode> {
 }
 
 fn one<'a>(r: Resolution<'a>, query: &str) -> Result<&'a Project> {
-    match r {
-        Resolution::One(t) => Ok(t.project),
-        Resolution::Many(hits) => Err(Error::Ambiguous(hits.into_iter().map(qualified).collect())),
-        Resolution::None => Err(Error::NotFound(query.to_owned())),
-    }
+    r.into_target(query).map(|t| t.project)
 }
 
 fn pick(hits: Vec<&Project>) -> Result<&Project> {
@@ -584,4 +672,47 @@ fn prune_cmd(json: bool, target: Option<&str>, yes: bool, force: bool) -> Result
         }
     });
     Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(test)]
+mod tests {
+    use picore_core::model::ProjectId;
+
+    use super::*;
+
+    fn project(name: &str) -> Project {
+        Project {
+            id: ProjectId(PathBuf::from(format!("/x/{name}/.git"))),
+            name: name.into(),
+            work_tree: None,
+            branch: None,
+            repo: None,
+            techs: vec![],
+            worktrees: vec![],
+            stamp: 0,
+        }
+    }
+
+    #[test]
+    fn groups_products_then_members_then_ungrouped_by_name() {
+        let ps: Vec<Project> = ["zed", "b", "a", "c", "loose"].map(project).into();
+        let products = [Some("shop"), Some("app"), Some("app"), None, None];
+        let listed: Vec<Listed> = ps
+            .iter()
+            .zip(products)
+            .map(|(project, product)| Listed { project, product })
+            .collect();
+        let got: Vec<(Option<&str>, Vec<&str>)> = grouped(&listed)
+            .into_iter()
+            .map(|(p, m)| (p, m.iter().map(|l| l.project.name.as_str()).collect()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (Some("app"), vec!["a", "b"]),
+                (Some("shop"), vec!["zed"]),
+                (None, vec!["c", "loose"]),
+            ]
+        );
+    }
 }

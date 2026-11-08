@@ -76,6 +76,7 @@ fn stdio_lists_tools() {
             "get_health",
             "get_project_context",
             "get_project_section",
+            "get_repo_info",
             "list_projects",
             "list_worktrees",
             "worktree_name"

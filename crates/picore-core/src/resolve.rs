@@ -1,6 +1,7 @@
 use std::env;
 use std::path::PathBuf;
 
+use crate::error::{Error, Result};
 use crate::model::{Project, Worktree, project_dir};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -14,6 +15,18 @@ pub enum Resolution<'a> {
     One(Target<'a>),
     Many(Vec<&'a Project>),
     None,
+}
+
+impl<'a> Resolution<'a> {
+    pub fn into_target(self, query: &str) -> Result<Target<'a>> {
+        match self {
+            Resolution::One(t) => Ok(t),
+            Resolution::Many(hits) => {
+                Err(Error::Ambiguous(hits.into_iter().map(qualified).collect()))
+            }
+            Resolution::None => Err(Error::NotFound(query.to_owned())),
+        }
+    }
 }
 
 /// Path (`/`, `~`, `.`), `name@N` (Worktree of issue N), or case-insensitive

@@ -181,6 +181,11 @@ pub fn origin_repo(repo: &Path) -> Result<Option<String>> {
     }
 }
 
+pub fn tags(work_tree: &Path, n: usize) -> Result<Vec<String>> {
+    let out = git(work_tree, &["tag", "--sort=-creatordate"])?;
+    Ok(out.lines().take(n).map(str::to_owned).collect())
+}
+
 pub fn common_dir(path: &Path) -> Result<PathBuf> {
     let out = git(path, &["rev-parse", "--git-common-dir"])?;
     Ok(path.join(out.trim_end_matches('\n')).canonicalize()?)

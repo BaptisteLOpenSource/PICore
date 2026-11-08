@@ -281,3 +281,14 @@ fn repo_local_filter_driver_is_not_run_by_worktree_remove() {
     git::remove_worktree(r.path(), &wt, false).unwrap();
     assert!(!marker.exists());
 }
+
+#[test]
+fn tags_newest_first_capped() {
+    let r = TestRepo::new();
+    for i in 0..7 {
+        r.run(&["tag", "-a", &format!("v{i}"), "-m", "t"]);
+    }
+    let t = git::tags(r.path(), 5).unwrap();
+    assert_eq!(t.len(), 5);
+    assert!(git::tags(TestRepo::unborn().path(), 5).unwrap().is_empty());
+}
