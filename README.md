@@ -78,6 +78,13 @@ picore completions zsh > ~/.zfunc/_picore
 picore man > picore.1
 ```
 
+`picore path <query>` prints a Project or Worktree directory. `pcd` wraps it in `cd`:
+
+```sh
+picore init fish | source        # fish; zsh/bash: eval "$(picore init zsh)"
+pcd room-booking/backend && claude
+```
+
 Config and Index live in XDG paths: `~/.config/picore/config.toml` and
 `~/.local/share/picore/picore.db`. Set `PICORE_CONFIG_DIR` and `PICORE_DATA_DIR` to override.
 

@@ -34,6 +34,14 @@ pub enum Cmd {
     Open {
         name: String,
     },
+    /// Print the directory of a Project or Worktree
+    Path {
+        query: String,
+    },
+    /// Print shell function `pcd` (cd to a Project or Worktree)
+    Init {
+        shell: InitShell,
+    },
     Status {
         name: Option<String>,
         #[arg(long)]
@@ -55,6 +63,13 @@ pub enum Cmd {
     },
     #[command(hide = true)]
     Man,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum InitShell {
+    Fish,
+    Zsh,
+    Bash,
 }
 
 #[derive(Subcommand)]

@@ -19,7 +19,7 @@ use picore_core::store::Index;
 use serde::Serialize;
 
 use crate::output::{emit, fail, mascot};
-use crate::{Cli, Cmd, RootCmd};
+use crate::{Cli, Cmd, InitShell, RootCmd};
 
 const GUI_BIN: &str = "picore-gui";
 
@@ -30,6 +30,8 @@ pub fn run(json: bool, quiet: bool, cmd: &Cmd) -> ExitCode {
         Cmd::List => list(json),
         Cmd::Gui => gui(json),
         Cmd::Open { name } => open(json, name),
+        Cmd::Path { query } => path_cmd(json, query),
+        Cmd::Init { shell } => init(*shell),
         Cmd::Status { name, remote } => status(json, name.as_deref(), *remote),
         Cmd::Worktrees { name } => worktrees(json, name.as_deref()),
         Cmd::Prune { target, yes, force } => prune_cmd(json, target.as_deref(), *yes, *force),
@@ -229,6 +231,62 @@ struct OpenReport<'a> {
     editor: &'a [String],
 }
 
+/// Directory a query points at; Err = refusal already reported.
+fn target_dir(
+    json: bool,
+    projects: &[Project],
+    name: &str,
+) -> Result<std::result::Result<PathBuf, ExitCode>> {
+    let (project, worktree) = match resolve(projects, name) {
+        Resolution::Many(hits) if !json && io::stdin().is_terminal() => (pick(hits)?, None),
+        Resolution::One(t) => (t.project, t.worktree),
+        r => (one(r, name)?, None),
+    };
+    let dir = worktree
+        .map(|w| w.path.clone())
+        .or_else(|| project.work_tree.clone())
+        .or_else(|| project.linked_worktrees().next().map(|w| w.path.clone()));
+    Ok(dir.ok_or_else(|| {
+        fail(
+            json,
+            "refused",
+            &format!("{}: no worktree to open", project.name),
+            &[],
+        )
+    }))
+}
+
+#[derive(Serialize)]
+struct PathReport<'a> {
+    path: &'a Path,
+}
+
+fn path_cmd(json: bool, name: &str) -> Result<ExitCode> {
+    let projects = refreshed(&Paths::from_env()?)?;
+    let path = match target_dir(json, &projects, name)? {
+        Ok(p) => p,
+        Err(code) => return Ok(code),
+    };
+    emit(json, &PathReport { path: &path }, |r| {
+        println!("{}", r.path.display())
+    });
+    Ok(ExitCode::SUCCESS)
+}
+
+fn init(shell: InitShell) -> Result<ExitCode> {
+    print!(
+        "{}",
+        match shell {
+            InitShell::Fish =>
+                "function pcd\n    set -l dir (picore path $argv); or return\n    cd $dir\nend\n",
+            InitShell::Zsh | InitShell::Bash => {
+                "pcd() {\n    local dir\n    dir=\"$(picore path \"$@\")\" || return\n    cd \"$dir\"\n}\n"
+            }
+        }
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
 fn open(json: bool, name: &str) -> Result<ExitCode> {
     let paths = Paths::from_env()?;
     // bad config must not hide the list: drop products, keep going
@@ -237,22 +295,9 @@ fn open(json: bool, name: &str) -> Result<ExitCode> {
         Config::default()
     });
     let projects = refreshed(&paths)?;
-    let (project, worktree) = match resolve(&projects, name) {
-        Resolution::Many(hits) if !json && io::stdin().is_terminal() => (pick(hits)?, None),
-        Resolution::One(t) => (t.project, t.worktree),
-        r => (one(r, name)?, None),
-    };
-    let Some(path) = worktree
-        .map(|w| w.path.clone())
-        .or_else(|| project.work_tree.clone())
-        .or_else(|| project.linked_worktrees().next().map(|w| w.path.clone()))
-    else {
-        return Ok(fail(
-            json,
-            "refused",
-            &format!("{}: no worktree to open", project.name),
-            &[],
-        ));
+    let path = match target_dir(json, &projects, name)? {
+        Ok(p) => p,
+        Err(code) => return Ok(code),
     };
     let editor = editor_command(
         cfg.editor.as_deref(),
