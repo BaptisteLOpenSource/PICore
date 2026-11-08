@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -63,11 +64,17 @@ impl TestRepo {
 
     // Plumbing only: `git commit` would run the global hooks, which reject commits on main.
     pub fn commit(&self, msg: &str) {
-        self.run(&["add", "-A"]);
-        let tree = self.run(&["write-tree"]);
+        self.commit_in(&self.path, msg, None);
+    }
+
+    // `dir` may be a linked Worktree: HEAD there moves its branch. `date` = committer date.
+    pub fn commit_in(&self, dir: &Path, msg: &str, date: Option<&str>) {
+        let git = |args: &[&str]| self.run_in(dir, args);
+        git(&["add", "-A"]);
+        let tree = git(&["write-tree"]);
         let parent = process::run(
             "git",
-            &self.path,
+            dir,
             &["rev-parse", "--verify", "-q", "HEAD"],
             TIMEOUT,
         )
@@ -77,8 +84,13 @@ impl TestRepo {
         if let Some(p) = parent.as_deref() {
             args.extend(["-p", p]);
         }
-        let sha = self.run(&args);
-        self.run(&["update-ref", "HEAD", sha.trim()]);
+        let env: Vec<_> = date
+            .map(|d| ("GIT_COMMITTER_DATE", OsStr::new(d)))
+            .into_iter()
+            .collect();
+        let sha = process::run_env("git", dir, &args, &env, TIMEOUT)
+            .unwrap_or_else(|e| panic!("git {args:?}: {e}"));
+        git(&["update-ref", "HEAD", sha.trim()]);
     }
 
     pub fn add_worktree(&self, dir: &Path, branch: &str) {
@@ -86,7 +98,10 @@ impl TestRepo {
     }
 
     pub fn run(&self, args: &[&str]) -> String {
-        process::run("git", &self.path, args, TIMEOUT)
-            .unwrap_or_else(|e| panic!("git {args:?}: {e}"))
+        self.run_in(&self.path, args)
+    }
+
+    pub fn run_in(&self, dir: &Path, args: &[&str]) -> String {
+        process::run("git", dir, args, TIMEOUT).unwrap_or_else(|e| panic!("git {args:?}: {e}"))
     }
 }

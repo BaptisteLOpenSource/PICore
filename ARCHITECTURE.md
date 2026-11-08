@@ -41,10 +41,11 @@ nothing about SQLite, processes or the filesystem. Adapters own those:
   through `picore prune`, which never touches local changes or unmerged work without an explicit
   path and `--force`.
 - Nothing outside the context whitelist is ever read for an AI agent.
-- Repo-local `filter.*` and `merge.*.driver` drivers are blanked during `status` and the prune
-  merge check, whose merge-tree objects go to a scratch dir, never the Project. Residual risk: a
-  driver defined in the user's global or system git config still runs when a repository binds it.
-  Scan Roots must hold trusted repositories only.
+- Repo-local `filter.*` drivers are blanked during `status`; `merge.*.driver` of every scope is
+  forced to `false` (passed through `GIT_CONFIG_*` env, safe for `=` in names). The prune merge
+  check sends merge-tree objects to a scratch dir, never the Project. Residual risk: a global or
+  system filter driver still runs when a repository binds it. Scan Roots must hold trusted
+  repositories only.
 
 ## Data locations (XDG)
 

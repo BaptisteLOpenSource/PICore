@@ -1,5 +1,5 @@
 use std::env;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -35,14 +35,25 @@ fn git_with(cwd: &Path, config: &[&str], args: &[&str]) -> Result<String> {
     git_env(cwd, config, &[], args)
 }
 
-fn git_env(cwd: &Path, config: &[&str], env: &[(&str, &OsStr)], args: &[&str]) -> Result<String> {
+type Env = Vec<(String, OsString)>;
+
+fn git_env(
+    cwd: &Path,
+    config: &[&str],
+    env: &[(String, OsString)],
+    args: &[&str],
+) -> Result<String> {
     // No optional locks: status would rewrite a stale index inside the Project.
     let mut full = vec!["--no-optional-locks", "-c", "core.fsmonitor=false"];
     for c in config {
         full.extend(["-c", c]);
     }
     full.extend(args);
-    Ok(process::run_env("git", cwd, &full, env, TIMEOUT)?)
+    let env: Vec<(&str, &OsStr)> = env
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_os_str()))
+        .collect();
+    Ok(process::run_env("git", cwd, &full, &env, TIMEOUT)?)
 }
 
 pub fn parse_worktree_list(z: &str) -> Vec<WorktreeEntry> {
@@ -119,11 +130,10 @@ pub fn worktrees(repo: &Path) -> Result<Vec<WorktreeEntry>> {
 }
 
 pub fn status(work_tree: &Path) -> Result<StatusSummary> {
-    let blanks = driver_blanks(work_tree)?;
-    let config: Vec<&str> = blanks.iter().map(String::as_str).collect();
-    Ok(parse_status(&git_with(
+    Ok(parse_status(&git_env(
         work_tree,
-        &config,
+        &[],
+        &driver_blanks(work_tree)?,
         // driver_blanks cannot reach submodule configs: do not enter them.
         &[
             "status",
@@ -135,10 +145,11 @@ pub fn status(work_tree: &Path) -> Result<StatusSummary> {
     )?))
 }
 
-// Re-hashing a stale index entry runs repo-chosen filter drivers, merge-tree runs
-// merge drivers: blank them. A failing merge driver reads as a conflict.
-// --local skips include.path, so read all scopes and keep the repo ones.
-fn driver_blanks(work_tree: &Path) -> Result<Vec<String>> {
+// Re-hashing a stale index entry runs repo-chosen filter drivers: blank repo ones.
+// merge-tree runs merge drivers: a user one could fake a merged tree, so set every
+// one to `false`, read as a conflict. Env, not -c: a '=' in the name breaks -c.
+fn driver_blanks(work_tree: &Path) -> Result<Env> {
+    // --local skips include.path, so read all scopes and filter.
     let out = match git(
         work_tree,
         &[
@@ -156,19 +167,24 @@ fn driver_blanks(work_tree: &Path) -> Result<Vec<String>> {
         Err(e) => return Err(e),
     };
     let fields: Vec<&str> = out.split('\0').collect();
-    Ok(fields
+    let blanks: Vec<(&str, &str)> = fields
         .as_chunks::<2>()
         .0
         .iter()
-        .filter(|[scope, _]| matches!(*scope, "local" | "worktree"))
-        .map(|[_, key]| {
+        .filter_map(|[scope, key]| {
             if key.starts_with("merge.") {
-                format!("{key}=false")
+                Some((*key, "false"))
             } else {
-                format!("{key}=")
+                matches!(*scope, "local" | "worktree").then_some((*key, ""))
             }
         })
-        .collect())
+        .collect();
+    let mut env: Env = vec![("GIT_CONFIG_COUNT".into(), blanks.len().to_string().into())];
+    for (n, (key, value)) in blanks.into_iter().enumerate() {
+        env.push((format!("GIT_CONFIG_KEY_{n}"), key.into()));
+        env.push((format!("GIT_CONFIG_VALUE_{n}"), value.into()));
+    }
+    Ok(env)
 }
 
 /// `owner/name` from an origin URL (https, ssh://, scp-like); any host.
@@ -305,8 +321,6 @@ pub fn is_merged(repo: &Path, tip: &str, into: &str) -> Result<bool> {
         return Ok(false);
     }
     let tree = rev(&format!("{into}^{{tree}}"))?;
-    let blanks = driver_blanks(repo)?;
-    let config: Vec<&str> = blanks.iter().map(String::as_str).collect();
     // merge-tree writes objects: send them to a scratch dir, never into the Project.
     let scratch = tempfile::tempdir()?;
     let objects = git(
@@ -318,24 +332,37 @@ pub fn is_merged(repo: &Path, tip: &str, into: &str) -> Result<bool> {
             "objects",
         ],
     )?;
-    let env = [
-        ("GIT_OBJECT_DIRECTORY", scratch.path().as_os_str()),
-        (
-            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-            OsStr::new(objects.trim_end_matches('\n')),
-        ),
+    // Alternates are ':'-separated; a double-quoted entry is C-unquoted by git.
+    let objects = objects.trim_end_matches('\n');
+    let quoted = format!("\"{}\"", objects.replace('\\', "\\\\").replace('"', "\\\""));
+    let mut env = driver_blanks(repo)?;
+    env.push(("GIT_OBJECT_DIRECTORY".into(), scratch.path().into()));
+    env.push(("GIT_ALTERNATE_OBJECT_DIRECTORIES".into(), quoted.into()));
+    let args = [
+        "merge-tree",
+        "--write-tree",
+        "--allow-unrelated-histories",
+        &into,
+        &tip,
     ];
-    match git_env(
-        repo,
-        &config,
-        &env,
-        &["merge-tree", "--write-tree", &into, &tip],
-    ) {
+    match git_env(repo, &[], &env, &args) {
         Ok(out) => Ok(out.lines().next() == Some(tree.as_str())),
-        // 1 = conflicts, 128 = unrelated histories: not merged either way.
-        Err(Error::Proc(ProcError::Failed { .. })) => Ok(false),
+        Err(Error::Proc(ProcError::Failed { code: Some(1), .. })) => Ok(false),
         Err(e) => Err(e),
     }
+}
+
+/// Seconds since epoch when the linked Worktree was added.
+pub fn created_at(work_tree: &Path) -> Result<i64> {
+    let dir = git(work_tree, &["rev-parse", "--absolute-git-dir"])?;
+    // commondir is written once by `worktree add`, never rewritten.
+    let added =
+        std::fs::metadata(Path::new(dir.trim_end_matches('\n')).join("commondir"))?.modified()?;
+    let secs = added
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(io::Error::other)?
+        .as_secs();
+    Ok(i64::try_from(secs).map_err(io::Error::other)?)
 }
 
 pub fn ls_remote(work_tree: &Path) -> Result<()> {
@@ -370,7 +397,6 @@ pub fn ls_remote(work_tree: &Path) -> Result<()> {
 pub fn remove_worktree(repo: &Path, path: &Path, force: bool) -> Result<()> {
     // worktree remove runs status inside the worktree: blank its drivers too.
     let blanks = driver_blanks(path)?;
-    let config: Vec<&str> = blanks.iter().map(String::as_str).collect();
     let path = path
         .to_str()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "non-UTF-8 worktree path"))?;
@@ -379,7 +405,7 @@ pub fn remove_worktree(repo: &Path, path: &Path, force: bool) -> Result<()> {
     } else {
         vec!["worktree", "remove", path]
     };
-    git_with(repo, &config, &args).map(|_| ())
+    git_env(repo, &[], &blanks, &args).map(|_| ())
 }
 
 pub fn prune_worktrees(repo: &Path) -> Result<()> {

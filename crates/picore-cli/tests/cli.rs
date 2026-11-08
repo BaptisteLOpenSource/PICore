@@ -184,6 +184,9 @@ fn merged_and_dirty(sb: &Sandbox) -> (PathBuf, PathBuf) {
         &["worktree", "add", "-q", "-b", "dirty", s(&dirty), "main"],
     );
     fs::write(dirty.join("wip.txt"), "x").unwrap();
+    // Own commit after creation, else the Worktree reads Fresh.
+    commit(&merged, "merged work");
+    git(&repo, &["merge", "-q", "--ff-only", "merged"]);
     commit(&repo, "two");
     (merged, dirty)
 }

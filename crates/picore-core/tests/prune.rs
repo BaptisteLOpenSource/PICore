@@ -43,10 +43,8 @@ fn fresh_branch_is_kept_not_merged() {
 #[test]
 fn merged_clean_is_prunable() {
     let r = TestRepo::new();
-    let wt = r.tmp().join("wt");
-    r.add_worktree(&wt, "feat");
-    r.write("next.txt", "x");
-    r.commit("next");
+    let wt = feat_worktree(&r);
+    merge_feat(&r);
     let p = project(&r);
     let a = assess(&p, linked(&p), &Config::default(), now()).unwrap();
     assert_eq!(a.verdict, Verdict::Prunable(Reason::Merged));
@@ -169,10 +167,8 @@ fn merged_with_only_rebuildable_ignored_dir_is_prunable() {
     let r = TestRepo::new();
     r.write(".gitignore", "target/\n");
     r.commit("ignore");
-    let wt = r.tmp().join("wt");
-    r.add_worktree(&wt, "feat");
-    r.write("next.txt", "x");
-    r.commit("next");
+    let wt = feat_worktree(&r);
+    merge_feat(&r);
     fs::create_dir(wt.join("target")).unwrap();
     fs::write(wt.join("target/x"), "b").unwrap();
     let p = project(&r);
@@ -213,14 +209,20 @@ fn set_origin_head(r: &TestRepo) {
     ]);
 }
 
-// Branch `feat` with one commit on top of init, checked out in a linked Worktree.
+// Linked Worktree on new branch `feat`, with one commit made in it.
 fn feat_worktree(r: &TestRepo) -> std::path::PathBuf {
-    r.write("feat.txt", "work");
-    r.commit("feat work");
-    r.run(&["branch", "feat"]);
     let wt = r.tmp().join("wt");
-    r.run(&["worktree", "add", "-q", wt.to_str().unwrap(), "feat"]);
+    r.add_worktree(&wt, "feat");
+    fs::write(wt.join("feat.txt"), "work").unwrap();
+    r.commit_in(&wt, "feat work", None);
     wt
+}
+
+// Fast-forward main onto feat, then move main past it.
+fn merge_feat(r: &TestRepo) {
+    r.run(&["merge", "-q", "--ff-only", "feat"]);
+    r.write("next.txt", "x");
+    r.commit("next");
 }
 
 fn verdict_of(r: &TestRepo) -> Verdict {
@@ -234,8 +236,7 @@ fn verdict_of(r: &TestRepo) -> Verdict {
 fn merged_into_origin_only_is_prunable() {
     let r = TestRepo::new();
     feat_worktree(&r);
-    r.write("more.txt", "x");
-    r.commit("more");
+    merge_feat(&r);
     set_origin(&r, "main", "main");
     set_origin_head(&r);
     r.run(&["update-ref", "refs/heads/main", "main~2"]);
@@ -243,36 +244,50 @@ fn merged_into_origin_only_is_prunable() {
 }
 
 #[test]
+fn fresh_worktree_from_stale_base_is_kept() {
+    let r = TestRepo::new();
+    r.write("old.txt", "x");
+    r.commit_in(r.path(), "old base", Some("2020-01-01T00:00:00Z"));
+    r.write("new.txt", "x");
+    r.commit("upstream work");
+    set_origin(&r, "main", "main");
+    set_origin_head(&r);
+    r.run(&["update-ref", "refs/heads/main", "main~1"]);
+    r.add_worktree(&r.tmp().join("wt"), "feat");
+    assert_eq!(verdict_of(&r), Verdict::Kept(Blocker::Fresh));
+}
+
+fn squashed(r: &TestRepo, wt: &std::path::Path) {
+    let put = |f: &str, c: &str| fs::write(wt.join(f), c).unwrap();
+    put("a.txt", "one");
+    r.commit_in(wt, "feat 1", None);
+    put("a.txt", "two");
+    put("b.txt", "b");
+    r.commit_in(wt, "feat 2", None);
+}
+
+#[test]
 fn squash_merged_is_prunable() {
     let r = TestRepo::new();
-    r.write("a.txt", "one");
-    r.commit("feat 1");
+    let wt = r.tmp().join("wt");
+    r.add_worktree(&wt, "feat");
+    squashed(&r, &wt);
     r.write("a.txt", "two");
     r.write("b.txt", "b");
-    r.commit("feat 2");
-    r.run(&["branch", "feat"]);
-    r.run(&["update-ref", "refs/heads/main", "main~2"]);
     r.commit("squash feat");
     r.write("later.txt", "x");
     r.commit("later");
-    let wt = r.tmp().join("wt");
-    r.run(&["worktree", "add", "-q", wt.to_str().unwrap(), "feat"]);
     assert_eq!(verdict_of(&r), Verdict::Prunable(Reason::Merged));
 }
 
 #[test]
 fn partly_squashed_branch_is_kept() {
     let r = TestRepo::new();
-    r.write("a.txt", "one");
-    r.commit("feat 1");
-    r.write("b.txt", "b");
-    r.commit("feat 2");
-    r.run(&["branch", "feat"]);
-    r.run(&["update-ref", "refs/heads/main", "main~2"]);
-    std::fs::remove_file(r.path().join("b.txt")).unwrap();
-    r.commit("squash feat 1 only");
     let wt = r.tmp().join("wt");
-    r.run(&["worktree", "add", "-q", wt.to_str().unwrap(), "feat"]);
+    r.add_worktree(&wt, "feat");
+    squashed(&r, &wt);
+    r.write("a.txt", "two");
+    r.commit("squash without b");
     assert_eq!(verdict_of(&r), Verdict::Kept(Blocker::NotMerged));
 }
 
@@ -280,8 +295,7 @@ fn partly_squashed_branch_is_kept() {
 fn merged_into_origin_dev_is_prunable() {
     let r = TestRepo::new();
     feat_worktree(&r);
-    r.write("dev.txt", "x");
-    r.commit("dev work");
+    merge_feat(&r);
     set_origin(&r, "dev", "main");
     set_origin(&r, "main", "main~2");
     set_origin_head(&r);
@@ -294,10 +308,8 @@ fn merged_with_build_output_dirs_is_prunable() {
     let r = TestRepo::new();
     r.write(".gitignore", ".next/\nbuild/\n.gradle/\n");
     r.commit("ignore");
-    let wt = r.tmp().join("wt");
-    r.add_worktree(&wt, "feat");
-    r.write("next.txt", "x");
-    r.commit("next");
+    let wt = feat_worktree(&r);
+    merge_feat(&r);
     fs::create_dir_all(wt.join(".next/cache")).unwrap();
     fs::write(wt.join(".next/cache/x"), "b").unwrap();
     fs::create_dir_all(wt.join("android/app/build")).unwrap();

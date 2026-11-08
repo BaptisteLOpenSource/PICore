@@ -64,7 +64,7 @@ PICore has no telemetry. It sends nothing to its authors.
 
 ## Install
 
-Requires a Rust toolchain (pinned in `rust-toolchain.toml`), `git`, and optionally `gh`.
+Requires a Rust toolchain (pinned in `rust-toolchain.toml`), `git` >= 2.38, and optionally `gh`.
 From a clone of this repository:
 
 ```sh
@@ -132,9 +132,9 @@ Commands that take a Project name also accept `name@<issue>` (the Worktree on br
 `picore prune --yes` removes only Prunable Worktrees: clean, and whose branch content is already in
 `origin/<default>` or `origin/dev` (merged or squash-merged; fetch first). Ignored files block unless
 they sit under a rebuildable dir (`node_modules`, `target`, `build`, `dist`, `.next`...); `.env*`
-always blocks. A kept Worktree (unmerged, local changes) is
-removed only when you name it by path and pass `--force`. Main and locked Worktrees are
-never removed.
+always blocks. A Fresh Worktree (no commit since it was added) is kept. A kept Worktree (unmerged,
+local changes) is removed only when you name it by path and pass `--force`. Main and locked
+Worktrees are never removed.
 
 Scanning runs git inside your repositories. PICore neutralizes fsmonitor, a repo-local `core.sshCommand` and the
 `ext` protocol, but a `filter.*.clean` driver declared through `.gitattributes` and your git config

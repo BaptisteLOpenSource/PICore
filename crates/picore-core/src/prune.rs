@@ -46,6 +46,7 @@ pub enum Blocker {
     EnvFile,
     IgnoredFiles,
     NotMerged,
+    Fresh,
     NoDefaultBranch,
 }
 
@@ -110,12 +111,20 @@ fn verdict(repo: &Path, wt: &Worktree) -> Result<Verdict> {
     };
     // PRs land in dev before a release reaches the default branch.
     let dev = git::remote_branch(repo, "dev")?;
+    let mut merged = false;
     for target in [Some(default), dev].into_iter().flatten() {
-        if git::is_merged(repo, head, &target)? {
-            return Ok(Verdict::Prunable(Reason::Merged));
-        }
+        merged = merged || git::is_merged(repo, head, &target)?;
     }
-    Ok(Verdict::Kept(Blocker::NotMerged))
+    if !merged {
+        return Ok(Verdict::Kept(Blocker::NotMerged));
+    }
+    // Tip older than the Worktree: no own commit, e.g. a new workspace on a stale base.
+    let created = git::created_at(&wt.path)?;
+    Ok(if wt.last_commit_at.is_none_or(|t| t < created) {
+        Verdict::Kept(Blocker::Fresh)
+    } else {
+        Verdict::Prunable(Reason::Merged)
+    })
 }
 
 pub fn remove(p: &Project, a: &Assessment, force: bool) -> Result<()> {

@@ -200,6 +200,19 @@ fn repo_local_filter_driver_is_not_run_by_status() {
 }
 
 #[test]
+fn filter_driver_with_equals_in_name_is_not_run_by_status() {
+    let r = TestRepo::new();
+    let (marker, clean) = marker_script(&r);
+    r.write("a.txt", "x");
+    r.commit("add a");
+    r.write(".gitattributes", "*.txt filter=x=y\n");
+    r.run(&["config", "filter.x=y.clean", &clean]);
+    r.write("a.txt", "x");
+    git::status(r.path()).unwrap();
+    assert!(!marker.exists());
+}
+
+#[test]
 fn included_filter_driver_is_not_run_by_status() {
     assert_filter_not_run(|r, clean| {
         let inc = r.tmp().join("inc.cfg");
@@ -322,15 +335,57 @@ fn diverged_conflict(r: &TestRepo) {
     r.commit("ours");
 }
 
-#[test]
-fn is_merged_runs_no_repo_merge_driver() {
+fn assert_merge_driver_not_run(name: &str) {
     let r = TestRepo::new();
     diverged_conflict(&r);
     let (marker, script) = marker_script(&r);
-    fs::write(r.path().join(".git/info/attributes"), "*.txt merge=mark\n").unwrap();
-    r.run(&["config", "merge.mark.driver", &script]);
+    let attr = format!("*.txt merge={name}\n");
+    fs::write(r.path().join(".git/info/attributes"), attr).unwrap();
+    r.run(&["config", &format!("merge.{name}.driver"), &script]);
     assert!(!git::is_merged(r.path(), "other", "main").unwrap());
     assert!(!marker.exists());
+}
+
+#[test]
+fn is_merged_runs_no_repo_merge_driver() {
+    assert_merge_driver_not_run("mark");
+}
+
+#[test]
+fn is_merged_runs_no_merge_driver_with_equals_in_name() {
+    assert_merge_driver_not_run("m=k");
+}
+
+#[test]
+fn is_merged_unrelated_histories_is_not_merged() {
+    let r = TestRepo::new();
+    r.run(&["symbolic-ref", "HEAD", "refs/heads/lone"]);
+    r.run(&["rm", "-q", "--cached", "README.md"]);
+    r.write("z.txt", "z");
+    r.commit("lone");
+    assert!(!git::is_merged(r.path(), "lone", "main").unwrap());
+}
+
+#[test]
+fn is_merged_propagates_merge_tree_failure() {
+    let r = TestRepo::new();
+    diverged_conflict(&r);
+    let blob = r.run(&["rev-parse", "other:a.txt"]);
+    let (dir, file) = blob.trim().split_at(2);
+    fs::remove_file(r.path().join(".git/objects").join(dir).join(file)).unwrap();
+    assert!(git::is_merged(r.path(), "other", "main").is_err());
+}
+
+#[test]
+fn is_merged_works_when_repo_path_has_colon() {
+    let r = TestRepo::new();
+    r.run(&["branch", "feat"]);
+    r.write("next.txt", "x");
+    r.commit("next");
+    let moved = r.tmp().join("re:po");
+    fs::rename(r.path(), &moved).unwrap();
+    assert!(git::is_merged(&moved, "feat", "main").unwrap());
+    assert!(!git::is_merged(&moved, "main", "feat").unwrap());
 }
 
 #[test]
