@@ -32,6 +32,12 @@ struct HealthArg {
     project: Option<String>,
 }
 
+#[derive(Deserialize, JsonSchema)]
+struct FindArg {
+    /// Project name, `parent/name`, `name@<issue>`, or a path (`/`, `~`, `.`) inside a Project or Worktree
+    query: String,
+}
+
 struct Handler(Server);
 
 const UNTRUSTED_NOTICE: &str =
@@ -52,6 +58,13 @@ impl Handler {
     #[tool(description = "List indexed Projects with branch, techs and Worktree count")]
     fn list_projects(&self) -> Result<String, String> {
         text(self.0.list_projects())
+    }
+
+    #[tool(
+        description = "Find a Project by name, `parent/name`, `name@<issue number>` (its issue Worktree) or any path inside a Project or Worktree. Returns path, repo, Worktrees and agent files, or candidates when ambiguous."
+    )]
+    fn find_project(&self, Parameters(a): Parameters<FindArg>) -> Result<String, String> {
+        text(self.0.find_project(&a.query))
     }
 
     #[tool(

@@ -106,6 +106,9 @@ picore prune
 # ...one line per Prunable Worktree, omitted
 ```
 
+Commands that take a Project name also accept `name@<issue>` (the Worktree on branch
+`<issue>-...`) and a path (`/`, `~`, `.`) inside a Project or Worktree. `picore open api@80` opens that Worktree.
+
 `picore gui` launches the `picore-gui` binary from the GUI bundle, detached, and returns at once.
 
 `picore prune --yes` removes only Prunable Worktrees. A kept Worktree (unmerged, local changes) is
@@ -146,8 +149,9 @@ Or in any MCP client config:
 
 Upgrading from `picore-mcp`: the binary is gone. Replace the command with `picore` and the args with `["mcp"]`.
 
-Tools: `list_projects`, `get_project_context`, `get_project_section`, `list_worktrees`,
-`get_health`. Project context is read from `README.md`, `CLAUDE.md` and `AGENTS.md` only.
+Tools: `list_projects`, `find_project`, `get_project_context`, `get_project_section`,
+`list_worktrees`, `get_health`. `find_project` takes a name, `parent/name`, `name@<issue>`
+(the Worktree on branch `<issue>-...`) or a path inside a Project or Worktree. Project context is read from `README.md`, `CLAUDE.md` and `AGENTS.md` only.
 Pass the `id` returned by `list_projects` as the `project` argument.
 
 ## Documentation

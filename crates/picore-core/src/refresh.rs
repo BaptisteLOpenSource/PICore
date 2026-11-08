@@ -10,7 +10,7 @@ use crate::config::Config;
 use crate::discovery::discover;
 use crate::error::{Error, Result};
 use crate::git;
-use crate::model::{Project, ProjectId, Worktree, project_name};
+use crate::model::{Project, ProjectId, Worktree, issue_of, project_name};
 use crate::store::Index;
 use crate::tech;
 
@@ -44,7 +44,7 @@ enum Step {
 // Root mtime: git deletes an empty `worktrees/` on last `worktree remove`, which only the root sees.
 pub fn stamp(id: &ProjectId) -> Result<i64> {
     let mut acc = fs::metadata(&id.0)?.modified()?;
-    for rel in ["HEAD", "packed-refs", "refs", "worktrees"] {
+    for rel in ["HEAD", "packed-refs", "refs", "worktrees", "config"] {
         acc = newest(&id.0.join(rel), acc)?;
     }
     Ok(acc
@@ -85,10 +85,11 @@ pub fn scan(id: &ProjectId) -> Result<Project> {
             is_main: i == 0,
             // An unborn worktree reports an all-zero HEAD.
             head: e.head.filter(|h| h.bytes().any(|b| b != b'0')),
-            branch: e.branch,
             detached: e.detached,
             locked: e.locked,
             last_commit_at,
+            issue: e.branch.as_deref().and_then(issue_of),
+            branch: e.branch,
             path: e.path,
         });
     }
@@ -101,6 +102,7 @@ pub fn scan(id: &ProjectId) -> Result<Project> {
         name: project_name(id),
         work_tree,
         branch,
+        repo: git::origin_repo(&id.0)?,
         techs,
         worktrees,
         stamp,

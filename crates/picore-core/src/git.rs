@@ -159,6 +159,28 @@ fn filter_blanks(work_tree: &Path) -> Result<Vec<String>> {
         .collect())
 }
 
+/// `owner/name` from an origin URL (https, ssh://, scp-like); any host.
+pub fn parse_repo(url: &str) -> Option<String> {
+    let url = url.trim().trim_end_matches('/');
+    let url = url.strip_suffix(".git").unwrap_or(url);
+    let path = match url.split_once("://") {
+        Some((_, rest)) => rest.split_once('/')?.1,
+        None => url.split_once(':')?.1,
+    };
+    let mut parts = path.rsplit('/').filter(|s| !s.is_empty());
+    let name = parts.next()?;
+    let owner = parts.next()?;
+    Some(format!("{owner}/{name}"))
+}
+
+pub fn origin_repo(repo: &Path) -> Result<Option<String>> {
+    match git(repo, &["config", "--get", "remote.origin.url"]) {
+        Ok(url) => Ok(parse_repo(&url)),
+        Err(Error::Proc(ProcError::Failed { .. })) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
 pub fn common_dir(path: &Path) -> Result<PathBuf> {
     let out = git(path, &["rev-parse", "--git-common-dir"])?;
     Ok(path.join(out.trim_end_matches('\n')).canonicalize()?)
@@ -290,5 +312,23 @@ fn verifies(repo: &Path, rev: &str) -> Result<bool> {
         Ok(_) => Ok(true),
         Err(Error::Proc(ProcError::Failed { .. })) => Ok(false),
         Err(e) => Err(e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn repo_from_origin_url() {
+        for (url, want) in [
+            ("https://github.com/o/n.git\n", Some("o/n")),
+            ("https://github.com/o/n", Some("o/n")),
+            ("ssh://git@github.com/o/n.git", Some("o/n")),
+            ("git@github.com:o/n.git", Some("o/n")),
+            ("https://gitlab.com/g/sub/n.git", Some("sub/n")),
+            ("/srv/git/n.git", None),
+            ("", None),
+        ] {
+            assert_eq!(super::parse_repo(url).as_deref(), want, "{url}");
+        }
     }
 }

@@ -237,13 +237,14 @@ fn open(json: bool, name: &str) -> Result<ExitCode> {
         Config::default()
     });
     let projects = refreshed(&paths)?;
-    let project = match resolve(&projects, name) {
-        Resolution::Many(hits) if !json && io::stdin().is_terminal() => pick(hits)?,
-        r => one(r, name)?,
+    let (project, worktree) = match resolve(&projects, name) {
+        Resolution::Many(hits) if !json && io::stdin().is_terminal() => (pick(hits)?, None),
+        Resolution::One(t) => (t.project, t.worktree),
+        r => (one(r, name)?, None),
     };
-    let Some(path) = project
-        .work_tree
-        .clone()
+    let Some(path) = worktree
+        .map(|w| w.path.clone())
+        .or_else(|| project.work_tree.clone())
         .or_else(|| project.linked_worktrees().next().map(|w| w.path.clone()))
     else {
         return Ok(fail(
@@ -316,7 +317,7 @@ fn gui(json: bool) -> Result<ExitCode> {
 
 fn one<'a>(r: Resolution<'a>, query: &str) -> Result<&'a Project> {
     match r {
-        Resolution::One(p) => Ok(p),
+        Resolution::One(t) => Ok(t.project),
         Resolution::Many(hits) => Err(Error::Ambiguous(hits.into_iter().map(qualified).collect())),
         Resolution::None => Err(Error::NotFound(query.to_owned())),
     }
