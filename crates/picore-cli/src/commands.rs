@@ -363,8 +363,15 @@ fn print_info(i: &Info) {
         rows.push(("github", e.clone()));
     }
     for (k, v) in rows {
-        println!("{k:<12}{v}");
+        println!("{k:<12}{}", plain(&v));
     }
+}
+
+/// Repo-sourced text must not carry terminal escapes.
+fn plain(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_control() { '?' } else { c })
+        .collect()
 }
 
 fn wt_name(json: bool, issue: u32, project: Option<&str>) -> Result<ExitCode> {
@@ -691,6 +698,11 @@ mod tests {
             worktrees: vec![],
             stamp: 0,
         }
+    }
+
+    #[test]
+    fn plain_strips_control_chars() {
+        assert_eq!(plain("\x1b[31mx\u{9b}\n"), "?[31mx??");
     }
 
     #[test]

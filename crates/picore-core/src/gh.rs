@@ -80,9 +80,10 @@ pub fn repo_view(repo: &str) -> Result<RepoInfo, String> {
         &[
             "repo",
             "view",
-            repo,
             "--json",
             "description,url,visibility,repositoryTopics,latestRelease,stargazerCount",
+            "--",
+            repo,
         ],
         TIMEOUT,
     )
