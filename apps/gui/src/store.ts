@@ -17,7 +17,19 @@ export function groupByProduct(projects: Listed[], products: Record<string, stri
   return [...groups.values()].filter((g) => g.product !== null || g.projects.length > 0);
 }
 
-export const needsAttention = (h: ProjectHealth | null) => !!h && h.dirty + h.ahead + h.behind > 0;
+export type Totals = { dirty: number; ahead: number | null; behind: number | null };
+
+// null = no worktree has an upstream, so "in sync" and "untracked" stay distinct.
+export function totals(h: ProjectHealth): Totals {
+  const sum = (k: "ahead" | "behind") =>
+    h.worktrees.reduce<number | null>((acc, w) => (w[k] === null ? acc : (acc ?? 0) + w[k]), null);
+  return { dirty: h.worktrees.reduce((n, w) => n + w.dirty, 0), ahead: sum("ahead"), behind: sum("behind") };
+}
+
+export const needsAttention = (h: ProjectHealth | null) => {
+  const t = h && totals(h);
+  return !!t && t.dirty + (t.ahead ?? 0) + (t.behind ?? 0) > 0;
+};
 
 const EMPTY: Overview = { projects: [], products: {}, roots: [], warnings: [] };
 

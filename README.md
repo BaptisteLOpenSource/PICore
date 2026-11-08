@@ -115,7 +115,8 @@ picore info PICore
 picore status
 # git: Ok git version 2.56.0
 # ssh-agent: Ok agent has keys
-# PICore: dirty 0 ahead 0 behind 0
+# PICore ~/Documents/Git/Config/PICore: dirty 0 ahead 0 behind 0
+# PICore ~/Documents/Git/Config/PICore.worktrees/76-health: dirty 2 no upstream
 picore worktrees PICore
 # PICore  ~/Documents/Git/Config/PICore  Kept(Main)
 # PICore  ~/Documents/Git/Config/PICore.worktrees/10-name-resolution  Kept(NotMerged)

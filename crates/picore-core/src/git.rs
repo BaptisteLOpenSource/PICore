@@ -21,8 +21,8 @@ pub struct WorktreeEntry {
 pub struct StatusSummary {
     pub branch: Option<String>,
     pub upstream: Option<String>,
-    pub ahead: u32,
-    pub behind: u32,
+    pub ahead: Option<u32>,
+    pub behind: Option<u32>,
     pub changes: u32,
 }
 
@@ -101,12 +101,10 @@ pub fn parse_status(z: &str) -> StatusSummary {
             let mut counts = v.split(' ');
             s.ahead = counts
                 .next()
-                .and_then(|a| a.strip_prefix('+')?.parse().ok())
-                .unwrap_or(0);
+                .and_then(|a| a.strip_prefix('+')?.parse().ok());
             s.behind = counts
                 .next()
-                .and_then(|b| b.strip_prefix('-')?.parse().ok())
-                .unwrap_or(0);
+                .and_then(|b| b.strip_prefix('-')?.parse().ok());
         } else {
             match field.split_once(' ') {
                 Some(("1" | "u" | "?", _)) => s.changes += 1,

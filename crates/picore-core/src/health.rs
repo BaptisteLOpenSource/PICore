@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
@@ -25,11 +25,19 @@ pub struct Check {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ProjectHealth {
+pub struct WorktreeHealth {
+    pub path: PathBuf,
+    pub branch: Option<String>,
     pub dirty: u32,
-    pub ahead: u32,
-    pub behind: u32,
+    // None = no upstream, distinct from Some(0) = in sync.
+    pub ahead: Option<u32>,
+    pub behind: Option<u32>,
     pub upstream: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProjectHealth {
+    pub worktrees: Vec<WorktreeHealth>,
     pub remote: Option<Check>,
 }
 
@@ -126,25 +134,28 @@ pub fn machine_health() -> Vec<Check> {
 }
 
 pub fn project_health(p: &Project, remote: bool) -> Result<ProjectHealth> {
-    let mut h = ProjectHealth {
-        dirty: 0,
-        ahead: 0,
-        behind: 0,
-        upstream: None,
-        remote: None,
-    };
-    if let Some(wt) = &p.work_tree {
-        let s = git::status(wt)?;
-        h.dirty = s.changes;
-        h.ahead = s.ahead;
-        h.behind = s.behind;
-        h.upstream = s.upstream;
-    }
-    if remote {
+    // A missing Worktree dir is prune's business, not a health failure.
+    let worktrees = p
+        .worktrees
+        .iter()
+        .filter(|w| w.path.is_dir())
+        .map(|w| {
+            let s = git::status(&w.path)?;
+            Ok(WorktreeHealth {
+                path: w.path.clone(),
+                branch: w.branch.clone(),
+                dirty: s.changes,
+                ahead: s.ahead,
+                behind: s.behind,
+                upstream: s.upstream,
+            })
+        })
+        .collect::<Result<_>>()?;
+    let remote = remote.then(|| {
         let dir = p.work_tree.as_deref().unwrap_or(&p.id.0);
-        h.remote = Some(classify_remote(git::ls_remote(dir)));
-    }
-    Ok(h)
+        classify_remote(git::ls_remote(dir))
+    });
+    Ok(ProjectHealth { worktrees, remote })
 }
 
 #[cfg(test)]

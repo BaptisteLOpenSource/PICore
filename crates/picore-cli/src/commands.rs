@@ -507,7 +507,16 @@ struct StatusReport<'a> {
 fn status(json: bool, name: Option<&str>, remote: bool) -> Result<ExitCode> {
     let paths = Paths::from_env()?;
     let projects = refreshed(&paths)?;
+    let found;
     let selected: Vec<&Project> = match name {
+        // Path form, so a Project name never resolves via the cwd.
+        Some(q) if Path::new(q).is_absolute() || q.starts_with('.') => {
+            let index = Index::open(&paths.index_file)?;
+            found = index
+                .find(Path::new(q))?
+                .ok_or_else(|| Error::NotFound(q.to_owned()))?;
+            vec![&found]
+        }
         Some(q) => vec![one(resolve(&projects, q), q)?],
         None => projects.iter().collect(),
     };
@@ -530,10 +539,16 @@ fn status(json: bool, name: Option<&str>, remote: bool) -> Result<ExitCode> {
             println!("{}: {:?} {}", c.name, c.status, c.message);
         }
         for p in &r.projects {
-            println!(
-                "{}: dirty {} ahead {} behind {}",
-                p.name, p.health.dirty, p.health.ahead, p.health.behind
-            );
+            if let Some(c) = &p.health.remote {
+                println!("{}: remote {:?} {}", p.name, c.status, c.message);
+            }
+            for w in &p.health.worktrees {
+                let sync = match (w.ahead, w.behind) {
+                    (Some(a), Some(b)) => format!("ahead {a} behind {b}"),
+                    _ => "no upstream".to_owned(),
+                };
+                println!("{} {}: dirty {} {sync}", p.name, w.path.display(), w.dirty);
+            }
         }
     });
     Ok(ExitCode::SUCCESS)

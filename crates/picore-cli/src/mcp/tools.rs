@@ -213,6 +213,36 @@ mod tests {
     }
 
     #[test]
+    fn lookup_by_linked_worktree_path() {
+        let dir = TempDir::new().unwrap();
+        let s = server(&dir);
+        let (_, id) = git_project(&dir, &s);
+        let repo = dir.path().join("repo");
+        let wt = dir.path().join("wt");
+        let git = |args: &[&str]| {
+            let out = Command::new("git").current_dir(&repo).args(args).output();
+            String::from_utf8(out.unwrap().stdout).unwrap()
+        };
+        let empty_tree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+        let sha = git(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit-tree",
+            empty_tree,
+            "-m",
+            "i",
+        ]);
+        git(&["update-ref", "HEAD", sha.trim()]);
+        git(&["worktree", "add", "-q", "-b", "feat", wt.to_str().unwrap()]);
+        s.index.lock().unwrap().upsert(&scan(&id).unwrap()).unwrap();
+        assert_eq!(s.lookup(wt.to_str().unwrap()).unwrap().id, id);
+        let rows = s.list_worktrees(wt.to_str().unwrap()).unwrap();
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
     fn list_projects_counts_linked_worktrees_only() {
         let dir = TempDir::new().unwrap();
         let s = server(&dir);

@@ -101,8 +101,14 @@ fn parse_status_reads_ahead_behind() {
     let s = git::parse_status(z);
     assert_eq!(
         (s.ahead, s.behind, s.changes, s.upstream.as_deref()),
-        (2, 1, 1, Some("origin/main"))
+        (Some(2), Some(1), 1, Some("origin/main"))
     );
+}
+
+#[test]
+fn parse_status_without_upstream_has_no_counts() {
+    let s = git::parse_status("# branch.oid abc\0# branch.head main\0");
+    assert_eq!((s.ahead, s.behind, s.upstream), (None, None, None));
 }
 
 #[test]

@@ -1,15 +1,16 @@
 import { createSignal, For, Show } from "solid-js";
 import { button, selected } from "./ui";
-import { groupByProduct, machine, needsAttention, overview, refresh, refreshing, selectedId, setSelectedId } from "./store";
+import { groupByProduct, machine, needsAttention, overview, refresh, refreshing, selectedId, setSelectedId, totals } from "./store";
 import type { Listed } from "./types";
 
 function finding(projects: Listed[]): string {
   const n = projects.filter((p) => needsAttention(p.health)).length;
   if (!projects.length) return "No project indexed yet. Add a scan root in Settings.";
   if (!n) return `All ${projects.length} projects are clean and in sync.`;
-  const dirty = projects.filter((p) => p.health?.dirty).length;
-  const ahead = projects.filter((p) => p.health?.ahead).length;
-  const behind = projects.filter((p) => p.health?.behind).length;
+  const t = projects.flatMap((p) => (p.health ? [totals(p.health)] : []));
+  const dirty = t.filter((x) => x.dirty).length;
+  const ahead = t.filter((x) => x.ahead).length;
+  const behind = t.filter((x) => x.behind).length;
   const parts = [
     dirty && `${dirty} with local changes`,
     ahead && `${ahead} ahead of upstream`,
@@ -18,16 +19,16 @@ function finding(projects: Listed[]): string {
   return `${n} of ${projects.length} need attention: ${parts.join(", ")}.`;
 }
 
-function Count(props: { value: number | undefined; class?: string }) {
+function Count(props: { value: number | null | undefined; class?: string }) {
   return (
     <td class={`text-right ${props.class ?? "px-3"} ${props.value ? "text-text" : "text-muted"}`}>
-      {props.value === undefined ? "-" : props.value}
+      {props.value ?? "-"}
     </td>
   );
 }
 
 function Row(props: { project: Listed }) {
-  const h = () => props.project.health ?? undefined;
+  const h = () => (props.project.health ? totals(props.project.health) : undefined);
   return (
     <tr
       aria-selected={selectedId() === props.project.id}

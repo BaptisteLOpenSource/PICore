@@ -17,11 +17,17 @@ export type Worktree = {
   last_commit_at: number | null;
 };
 
-export type ProjectHealth = {
+export type WorktreeHealth = {
+  path: string;
+  branch: string | null;
   dirty: number;
-  ahead: number;
-  behind: number;
+  ahead: number | null;
+  behind: number | null;
   upstream: string | null;
+};
+
+export type ProjectHealth = {
+  worktrees: WorktreeHealth[];
   remote: Check | null;
 };
 

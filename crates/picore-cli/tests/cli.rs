@@ -383,6 +383,45 @@ fn status_json_has_machine_checks() {
 }
 
 #[test]
+fn status_by_worktree_subdir_reports_each_worktree_and_remote() {
+    let sb = Sandbox::new();
+    let a = sb.repo("code/a");
+    let git = |args: &[&str]| process::run("git", &a, args, TIMEOUT).unwrap();
+    let empty_tree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+    let sha = git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit-tree",
+        empty_tree,
+        "-m",
+        "i",
+    ]);
+    git(&["update-ref", "HEAD", sha.trim()]);
+    git(&["remote", "add", "origin", "/picore-no-such/x.git"]);
+    let wt = sb.path().join("wt");
+    git(&["worktree", "add", "-q", "-b", "feat", s(&wt)]);
+    fs::create_dir(wt.join("sub")).unwrap();
+    fs::write(wt.join("agent.txt"), "x").unwrap();
+    add_code_root(&sb);
+
+    let out = sb.picore(&["status", "--remote", s(&wt.join("sub"))]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    let wt = fs::canonicalize(&wt).unwrap();
+    assert!(text.contains("a: remote Unknown"), "{text}");
+    assert!(
+        text.contains(&format!("a {}: dirty 1 no upstream", wt.display())),
+        "{text}"
+    );
+}
+
+#[test]
 fn open_has_short_alias() {
     let sb = Sandbox::new();
     sb.repo("code/a");

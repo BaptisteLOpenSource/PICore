@@ -1,22 +1,25 @@
 import { For, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { panel, textButton } from "./ui";
-import { detail, isWide, overview, selectedId, setSelectedId } from "./store";
+import { detail, isWide, overview, selectedId, setSelectedId, totals } from "./store";
 import type { Detail as DetailData } from "./types";
 
 function Info(props: { data: DetailData }) {
   const ctx = () => props.data.context;
   const health = () => props.data.health;
   const product = () => overview().projects.find((p) => p.id === selectedId())?.product;
-  const figures = () => [
-    { label: "Changes", value: health().dirty },
-    { label: "Ahead", value: health().ahead },
-    { label: "Behind", value: health().behind },
-  ];
+  const figures = () => {
+    const t = totals(health());
+    return [
+      { label: "Changes", value: t.dirty },
+      { label: "Ahead", value: t.ahead },
+      { label: "Behind", value: t.behind },
+    ];
+  };
   const facts = () => [
     { label: "Product", value: product() ?? "-", mono: false },
     { label: "Branch", value: ctx().branch ?? "-", mono: true },
-    { label: "Upstream", value: health().upstream ?? "No upstream", mono: true },
+    { label: "Upstream", value: health().worktrees[0]?.upstream ?? "No upstream", mono: true },
     { label: "Remote", value: health().remote?.message ?? "-", mono: false },
     { label: "Techs", value: ctx().techs.join(", ") || "-", mono: false },
   ];
@@ -37,7 +40,7 @@ function Info(props: { data: DetailData }) {
           {(f) => (
             <div class="px-4 py-3">
               <dt class="text-[12px] text-muted">{f.label}</dt>
-              <dd class={`mt-0.5 text-[20px] ${f.value ? "text-text" : "text-muted"}`}>{f.value}</dd>
+              <dd class={`mt-0.5 text-[20px] ${f.value ? "text-text" : "text-muted"}`}>{f.value ?? "-"}</dd>
             </div>
           )}
         </For>
