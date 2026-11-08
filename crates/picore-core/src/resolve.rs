@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn name_at_issue_picks_worktree() {
-        let ps = [issue_project("/src/api", &["12-a", "80-b"])];
+        let ps = [issue_project("/src/api", &["main", "12-a", "80-b"])];
         let Resolution::One(t) = resolve(&ps, "api@80") else {
             panic!("expected One");
         };
