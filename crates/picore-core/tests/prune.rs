@@ -195,3 +195,118 @@ fn env_file_inside_rebuildable_dir_is_kept() {
     let a = assess(&p, linked(&p), &Config::default(), now()).unwrap();
     assert_eq!(a.verdict, Verdict::Kept(Blocker::EnvFile));
 }
+
+fn set_origin(r: &TestRepo, name: &str, rev: &str) {
+    let sha = r.run(&["rev-parse", rev]);
+    r.run(&[
+        "update-ref",
+        &format!("refs/remotes/origin/{name}"),
+        sha.trim(),
+    ]);
+}
+
+fn set_origin_head(r: &TestRepo) {
+    r.run(&[
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/main",
+    ]);
+}
+
+// Branch `feat` with one commit on top of init, checked out in a linked Worktree.
+fn feat_worktree(r: &TestRepo) -> std::path::PathBuf {
+    r.write("feat.txt", "work");
+    r.commit("feat work");
+    r.run(&["branch", "feat"]);
+    let wt = r.tmp().join("wt");
+    r.run(&["worktree", "add", "-q", wt.to_str().unwrap(), "feat"]);
+    wt
+}
+
+fn verdict_of(r: &TestRepo) -> Verdict {
+    let p = project(r);
+    assess(&p, linked(&p), &Config::default(), now())
+        .unwrap()
+        .verdict
+}
+
+#[test]
+fn merged_into_origin_only_is_prunable() {
+    let r = TestRepo::new();
+    feat_worktree(&r);
+    r.write("more.txt", "x");
+    r.commit("more");
+    set_origin(&r, "main", "main");
+    set_origin_head(&r);
+    r.run(&["update-ref", "refs/heads/main", "main~2"]);
+    assert_eq!(verdict_of(&r), Verdict::Prunable(Reason::Merged));
+}
+
+#[test]
+fn squash_merged_is_prunable() {
+    let r = TestRepo::new();
+    r.write("a.txt", "one");
+    r.commit("feat 1");
+    r.write("a.txt", "two");
+    r.write("b.txt", "b");
+    r.commit("feat 2");
+    r.run(&["branch", "feat"]);
+    r.run(&["update-ref", "refs/heads/main", "main~2"]);
+    r.commit("squash feat");
+    r.write("later.txt", "x");
+    r.commit("later");
+    let wt = r.tmp().join("wt");
+    r.run(&["worktree", "add", "-q", wt.to_str().unwrap(), "feat"]);
+    assert_eq!(verdict_of(&r), Verdict::Prunable(Reason::Merged));
+}
+
+#[test]
+fn partly_squashed_branch_is_kept() {
+    let r = TestRepo::new();
+    r.write("a.txt", "one");
+    r.commit("feat 1");
+    r.write("b.txt", "b");
+    r.commit("feat 2");
+    r.run(&["branch", "feat"]);
+    r.run(&["update-ref", "refs/heads/main", "main~2"]);
+    std::fs::remove_file(r.path().join("b.txt")).unwrap();
+    r.commit("squash feat 1 only");
+    let wt = r.tmp().join("wt");
+    r.run(&["worktree", "add", "-q", wt.to_str().unwrap(), "feat"]);
+    assert_eq!(verdict_of(&r), Verdict::Kept(Blocker::NotMerged));
+}
+
+#[test]
+fn merged_into_origin_dev_is_prunable() {
+    let r = TestRepo::new();
+    feat_worktree(&r);
+    r.write("dev.txt", "x");
+    r.commit("dev work");
+    set_origin(&r, "dev", "main");
+    set_origin(&r, "main", "main~2");
+    set_origin_head(&r);
+    r.run(&["update-ref", "refs/heads/main", "main~2"]);
+    assert_eq!(verdict_of(&r), Verdict::Prunable(Reason::Merged));
+}
+
+#[test]
+fn merged_with_build_output_dirs_is_prunable() {
+    let r = TestRepo::new();
+    r.write(".gitignore", ".next/\nbuild/\n.gradle/\n");
+    r.commit("ignore");
+    let wt = r.tmp().join("wt");
+    r.add_worktree(&wt, "feat");
+    r.write("next.txt", "x");
+    r.commit("next");
+    fs::create_dir_all(wt.join(".next/cache")).unwrap();
+    fs::write(wt.join(".next/cache/x"), "b").unwrap();
+    fs::create_dir_all(wt.join("android/app/build")).unwrap();
+    fs::write(wt.join("android/app/build/out.apk"), "b").unwrap();
+    fs::create_dir_all(wt.join("android/.gradle")).unwrap();
+    fs::write(wt.join("android/.gradle/lock"), "b").unwrap();
+    let p = project(&r);
+    let a = assess(&p, linked(&p), &Config::default(), now()).unwrap();
+    assert_eq!(a.verdict, Verdict::Prunable(Reason::Merged));
+    remove(&p, &a, false).unwrap();
+    assert!(!wt.exists());
+}

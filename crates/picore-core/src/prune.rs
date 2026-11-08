@@ -9,7 +9,21 @@ use crate::model::{Project, Worktree};
 
 const DAY: i64 = 86_400;
 // Not Config ignore_dirs: a discovery setting must not widen deletion.
-const REBUILDABLE: [&str; 3] = ["node_modules", "target", ".venv"];
+const REBUILDABLE: [&str; 13] = [
+    "node_modules",
+    "target",
+    ".venv",
+    ".next",
+    "build",
+    "dist",
+    "out",
+    ".gradle",
+    "coverage",
+    "__pycache__",
+    ".turbo",
+    ".cache",
+    ".pytest_cache",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum Verdict {
@@ -76,12 +90,13 @@ fn verdict(repo: &Path, wt: &Worktree) -> Result<Verdict> {
     if ignored.iter().any(|p| git::is_env_file(p)) {
         return Ok(Verdict::Kept(Blocker::EnvFile));
     }
+    // Any enclosing dir counts: build output nests (android/app/build).
     let blocking = ignored.iter().any(|p| {
-        let first = p
-            .strip_prefix(&wt.path)
-            .ok()
-            .and_then(|r| r.components().next());
-        !first.is_some_and(|c| REBUILDABLE.iter().any(|d| c.as_os_str() == *d))
+        let dirs = p.strip_prefix(&wt.path).ok().and_then(Path::parent);
+        !dirs.is_some_and(|d| {
+            d.components()
+                .any(|c| REBUILDABLE.iter().any(|r| c.as_os_str() == *r))
+        })
     });
     if blocking {
         return Ok(Verdict::Kept(Blocker::IgnoredFiles));
@@ -90,15 +105,17 @@ fn verdict(repo: &Path, wt: &Worktree) -> Result<Verdict> {
         return Ok(Verdict::Kept(Blocker::NoDefaultBranch));
     };
     // Unborn worktree has no tip: nothing to merge, so it stays.
-    let merged = match wt.head.as_deref() {
-        Some(head) => git::is_strict_ancestor(repo, head, &default)?,
-        None => false,
+    let Some(head) = wt.head.as_deref() else {
+        return Ok(Verdict::Kept(Blocker::NotMerged));
     };
-    Ok(if merged {
-        Verdict::Prunable(Reason::Merged)
-    } else {
-        Verdict::Kept(Blocker::NotMerged)
-    })
+    // PRs land in dev before a release reaches the default branch.
+    let dev = git::remote_branch(repo, "dev")?;
+    for target in [Some(default), dev].into_iter().flatten() {
+        if git::is_merged(repo, head, &target)? {
+            return Ok(Verdict::Prunable(Reason::Merged));
+        }
+    }
+    Ok(Verdict::Kept(Blocker::NotMerged))
 }
 
 pub fn remove(p: &Project, a: &Assessment, force: bool) -> Result<()> {

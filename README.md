@@ -129,7 +129,10 @@ Commands that take a Project name also accept `name@<issue>` (the Worktree on br
 
 `picore gui` launches the `picore-gui` binary from the GUI bundle, detached, and returns at once.
 
-`picore prune --yes` removes only Prunable Worktrees. A kept Worktree (unmerged, local changes) is
+`picore prune --yes` removes only Prunable Worktrees: clean, and whose branch content is already in
+`origin/<default>` or `origin/dev` (merged or squash-merged; fetch first). Ignored files block unless
+they sit under a rebuildable dir (`node_modules`, `target`, `build`, `dist`, `.next`...); `.env*`
+always blocks. A kept Worktree (unmerged, local changes) is
 removed only when you name it by path and pass `--force`. Main and locked Worktrees are
 never removed.
 

@@ -36,12 +36,12 @@ fn unborn_repo_has_no_last_commit() {
 }
 
 #[test]
-fn strict_ancestor_excludes_same_tip() {
+fn is_merged_excludes_same_tip() {
     let r = TestRepo::new();
     r.run(&["branch", "fresh"]);
-    assert!(!git::is_strict_ancestor(r.path(), "fresh", "main").unwrap());
+    assert!(!git::is_merged(r.path(), "fresh", "main").unwrap());
     r.commit("next");
-    assert!(git::is_strict_ancestor(r.path(), "fresh", "main").unwrap());
+    assert!(git::is_merged(r.path(), "fresh", "main").unwrap());
 }
 
 #[test]
@@ -72,8 +72,8 @@ fn default_branch_falls_back_to_origin_when_local_missing() {
     r.commit("next");
     let default = git::default_branch(r.path()).unwrap().unwrap();
     assert_eq!(default, "origin/main");
-    assert!(!git::is_strict_ancestor(r.path(), "work", &default).unwrap());
-    assert!(git::is_strict_ancestor(r.path(), "origin/main", "work").unwrap());
+    assert!(!git::is_merged(r.path(), "work", &default).unwrap());
+    assert!(git::is_merged(r.path(), "origin/main", "work").unwrap());
 }
 
 #[test]
@@ -92,7 +92,7 @@ fn fsmonitor_in_repo_config_is_not_run() {
 #[test]
 fn rev_starting_with_dash_is_not_an_option() {
     let r = TestRepo::new();
-    assert!(git::is_strict_ancestor(r.path(), "main", "--help").is_err());
+    assert!(git::is_merged(r.path(), "main", "--help").is_err());
 }
 
 #[test]
@@ -291,4 +291,54 @@ fn tags_newest_first_capped() {
     let t = git::tags(r.path(), 5).unwrap();
     assert_eq!(t.len(), 5);
     assert!(git::tags(TestRepo::unborn().path(), 5).unwrap().is_empty());
+}
+
+#[test]
+fn default_branch_prefers_origin_over_stale_local() {
+    let r = TestRepo::new();
+    r.write("next.txt", "x");
+    r.commit("next");
+    r.run(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    r.run(&[
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/main",
+    ]);
+    r.run(&["update-ref", "refs/heads/main", "HEAD~1"]);
+    assert_eq!(
+        git::default_branch(r.path()).unwrap().as_deref(),
+        Some("origin/main")
+    );
+}
+
+fn diverged_conflict(r: &TestRepo) {
+    r.write("a.txt", "base");
+    r.commit("base");
+    r.write("a.txt", "theirs");
+    r.commit("theirs");
+    r.run(&["branch", "other"]);
+    r.run(&["update-ref", "refs/heads/main", "main~1"]);
+    r.write("a.txt", "ours");
+    r.commit("ours");
+}
+
+#[test]
+fn is_merged_runs_no_repo_merge_driver() {
+    let r = TestRepo::new();
+    diverged_conflict(&r);
+    let (marker, script) = marker_script(&r);
+    fs::write(r.path().join(".git/info/attributes"), "*.txt merge=mark\n").unwrap();
+    r.run(&["config", "merge.mark.driver", &script]);
+    assert!(!git::is_merged(r.path(), "other", "main").unwrap());
+    assert!(!marker.exists());
+}
+
+#[test]
+fn is_merged_writes_no_object_into_project() {
+    let r = TestRepo::new();
+    diverged_conflict(&r);
+    let objects = || r.run(&["count-objects", "-v"]);
+    let before = objects();
+    assert!(!git::is_merged(r.path(), "other", "main").unwrap());
+    assert_eq!(objects(), before);
 }

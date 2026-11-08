@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::io::{self, Read};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -28,10 +29,21 @@ pub fn run(
     args: &[&str],
     timeout: Duration,
 ) -> Result<String, ProcError> {
+    run_env(program, cwd, args, &[], timeout)
+}
+
+pub fn run_env(
+    program: &str,
+    cwd: &Path,
+    args: &[&str],
+    env: &[(&str, &OsStr)],
+    timeout: Duration,
+) -> Result<String, ProcError> {
     let start = Instant::now();
     let mut child = Command::new(program)
         .args(args)
         .current_dir(cwd)
+        .envs(env.iter().copied())
         .env("LC_ALL", "C")
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null())

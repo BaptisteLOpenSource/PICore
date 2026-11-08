@@ -25,7 +25,7 @@ An additional working tree of a Project, attached to that Project wherever it li
 _Avoid_: Ghost folder, checkout, clone
 
 **Prunable Worktree**:
-A Worktree whose directory is gone, or whose branch is merged into the default branch with no local changes.
+A Worktree whose directory is gone, or whose branch content is already in the remote default branch or `origin/dev` (merge or squash) with no local changes.
 _Avoid_: Obsolete, dead, orphan
 
 **Stale Worktree**:
