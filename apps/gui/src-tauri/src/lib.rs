@@ -7,6 +7,7 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use picore_core::config::{Config, Paths};
 use picore_core::context::{self, ProjectContext};
 use picore_core::health::{self, Check, ProjectHealth};
+use picore_core::prune::{self, Assessment};
 use picore_core::refresh;
 use picore_core::resolve::resolve;
 use picore_core::store::Index;
@@ -33,6 +34,7 @@ pub struct Overview {
 pub struct Detail {
     pub context: ProjectContext,
     pub health: ProjectHealth,
+    pub prune: Vec<Assessment>,
 }
 
 fn err(e: impl std::fmt::Display) -> String {
@@ -102,6 +104,7 @@ pub fn detail(paths: &Paths, id: PathBuf) -> Result<Detail, String> {
     Ok(Detail {
         context: context::context(project, &view::of(project, &all, &cfg)).map_err(err)?,
         health: health::project_health(project, false),
+        prune: prune::assess_project(project, &cfg),
     })
 }
 
@@ -217,6 +220,11 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("tauri app");
 }
+
+#[cfg(test)]
+#[allow(dead_code)] // shared helpers, not all used here
+#[path = "../../../../crates/picore-core/tests/support/mod.rs"]
+mod support;
 
 #[cfg(test)]
 mod tests {
@@ -349,5 +357,41 @@ mod tests {
         let d = detail(&paths, id).unwrap();
         assert_eq!(d.context.name, "app");
         assert_eq!(d.health.worktrees.len(), 1);
+        assert_eq!(d.prune.len(), 1);
+    }
+
+    #[test]
+    fn detail_flags_a_missing_worktree_prunable() {
+        let (tmp, paths, src) = setup();
+        let app = src.join("prod/app");
+        let wt = tmp.path().join("app-wt");
+        crate::support::commit_in(&app, "init", None);
+        let add = [
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "74-gone",
+            wt.to_str().unwrap(),
+        ];
+        picore_core::process::run("git", &app, &add, TIMEOUT).unwrap();
+        fs::remove_dir_all(&wt).unwrap();
+        let ov = overview(&paths, true).unwrap();
+        let d = detail(&paths, find(&ov, "app").view.id.clone()).unwrap();
+        let gone = d
+            .prune
+            .iter()
+            .find(|a| a.branch.as_deref() == Some("74-gone"))
+            .unwrap();
+        assert_eq!(
+            gone.verdict,
+            prune::Verdict::Prunable(prune::Reason::Missing)
+        );
+        let listed = d
+            .context
+            .worktrees
+            .iter()
+            .find(|w| w.branch.as_deref() == Some("74-gone"));
+        assert_eq!(listed.unwrap().issue, Some(74));
     }
 }

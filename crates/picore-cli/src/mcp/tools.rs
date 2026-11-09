@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use picore_core::config::{Config, Paths};
 use picore_core::context::{self, ProjectContext, Section, WHITELIST};
@@ -135,14 +135,7 @@ impl Server {
 
     pub fn list_worktrees(&self, project: &str) -> Result<Vec<Assessment>> {
         let (p, _) = self.lookup(project)?;
-        let cfg = self.cfg();
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs() as i64);
-        Ok(p.worktrees
-            .iter()
-            .map(|wt| prune::assess(&p, wt, &cfg, now))
-            .collect())
+        Ok(prune::assess_project(&p, &self.cfg()))
     }
 
     pub fn get_health(&self, project: Option<&str>) -> Result<Value> {

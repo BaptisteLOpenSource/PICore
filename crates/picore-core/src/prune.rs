@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
@@ -75,6 +76,17 @@ pub fn assess(p: &Project, wt: &Worktree, cfg: &Config, now: i64) -> Assessment 
         verdict: verdict(&p.id.0, wt).unwrap_or_else(|e| Verdict::Unknown(e.to_string())),
         stale,
     }
+}
+
+/// Every Worktree of `p`, main included, assessed now.
+pub fn assess_project(p: &Project, cfg: &Config) -> Vec<Assessment> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    p.worktrees
+        .iter()
+        .map(|wt| assess(p, wt, cfg, now))
+        .collect()
 }
 
 fn verdict(repo: &Path, wt: &Worktree) -> Result<Verdict> {

@@ -4,7 +4,6 @@ use std::fs;
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::CommandFactory;
 use clap_complete::Shell;
@@ -518,20 +517,13 @@ fn status(json: bool, name: Option<&str>, remote: bool) -> Result<ExitCode> {
     Ok(exit(failed))
 }
 
-fn now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
-}
-
 fn assess_all<'a>(projects: &[&'a Project], cfg: &Config) -> Vec<(&'a Project, Assessment)> {
-    let now = now();
     projects
         .iter()
         .flat_map(|p| {
-            p.worktrees
-                .iter()
-                .map(move |wt| (*p, prune::assess(p, wt, cfg, now)))
+            prune::assess_project(p, cfg)
+                .into_iter()
+                .map(move |a| (*p, a))
         })
         .collect()
 }
