@@ -10,6 +10,7 @@ use crate::model::{Project, Worktree};
 pub const WHITELIST: [&str; 3] = ["README.md", "CLAUDE.md", "AGENTS.md"];
 
 const INTRO_MAX: usize = 2048;
+const HEADING_MAX: usize = 512;
 const OUTLINE_MAX: usize = 100;
 const SECTION_MAX: usize = 16384;
 const FILE_MAX: u64 = 1 << 20;
@@ -105,23 +106,47 @@ fn heading_text(rest: &str) -> &str {
     }
 }
 
+const TAGS: &[&str] = &[
+    "a", "b", "i", "u", "p", "br", "hr", "img", "div", "span", "em", "strong", "code", "pre",
+    "details", "summary", "picture", "source", "sup", "sub", "center", "table", "tr", "td", "th",
+    "ul", "ol", "li", "kbd", "svg", "h1", "h2", "h3", "h4", "h5", "h6",
+];
+
+// Length of a known HTML tag at the start of `s`, 0 if none. Stops at the
+// next `<` or newline, so unclosed input stays linear.
+fn tag_len(s: &str) -> usize {
+    let body = &s[1..];
+    let name = body.strip_prefix('/').unwrap_or(body);
+    let n = name
+        .find(|c: char| !c.is_ascii_alphanumeric())
+        .unwrap_or(name.len());
+    if !TAGS.contains(&&name[..n]) {
+        return 0;
+    }
+    match body.find(['>', '<', '\n']) {
+        Some(e) if body.as_bytes()[e] == b'>' => e + 2,
+        _ => 0,
+    }
+}
+
 // Drops HTML comments, tags and markdown images; link text stays.
 pub fn strip_markup(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
+    let mut no_image = false;
     while let Some(i) = rest.find(['<', '!']) {
         out.push_str(&rest[..i]);
         rest = &rest[i..];
         let skip = if let Some(r) = rest.strip_prefix("<!--") {
             r.find("-->").map_or(rest.len(), |e| 4 + e + 3)
-        } else if rest.starts_with('<')
-            && rest[1..].starts_with(|c: char| c.is_ascii_alphabetic() || c == '/')
-        {
-            rest.find('>').map_or(0, |e| e + 1)
-        } else if rest.starts_with("![") {
-            rest.find("](")
-                .and_then(|a| rest[a..].find(')').map(|b| a + b + 1))
-                .unwrap_or(0)
+        } else if rest.starts_with('<') {
+            tag_len(rest)
+        } else if rest.starts_with("![") && !no_image {
+            let end = rest
+                .find("](")
+                .and_then(|a| rest[a..].find(')').map(|b| a + b + 1));
+            no_image = end.is_none();
+            end.unwrap_or(0)
         } else {
             0
         };
@@ -136,7 +161,10 @@ pub fn strip_markup(s: &str) -> String {
     while let Some(i) = rest.find("[](") {
         clean.push_str(&rest[..i]);
         rest = &rest[i..];
-        rest = rest.find(')').map_or(&rest[1..], |e| &rest[e + 1..]);
+        match rest.find(')') {
+            Some(e) => rest = &rest[e + 1..],
+            None => break,
+        }
     }
     clean.push_str(rest);
     let mut lines: Vec<&str> = Vec::new();
@@ -178,14 +206,16 @@ pub fn outline(md: &str) -> (String, bool, Vec<Heading>, bool) {
             if headings.len() < OUTLINE_MAX {
                 headings.push(Heading {
                     level,
-                    text: strip_markup(text),
+                    text: strip_markup(cut(text.to_owned(), HEADING_MAX).0.as_str()),
                 });
             } else {
                 headings_truncated = true;
             }
         }
     }
-    let (intro, intro_truncated) = cut(strip_markup(&intro), INTRO_MAX);
+    let (intro, intro_truncated) = cut(intro, INTRO_MAX * 4);
+    let (intro, cut_more) = cut(strip_markup(&intro), INTRO_MAX);
+    let intro_truncated = intro_truncated || cut_more;
     (intro, intro_truncated, headings, headings_truncated)
 }
 
@@ -296,6 +326,25 @@ mod tests {
             strip_markup(md),
             "# PICore  tool\nSee [docs](https://d) a < b! ok"
         );
+    }
+
+    #[test]
+    fn strip_markup_is_linear_on_unclosed_input() {
+        let t = std::time::Instant::now();
+        for unit in ["<a", "[](", "![", "![](", "<a<a>"] {
+            strip_markup(&unit.repeat(100_000));
+        }
+        assert!(t.elapsed().as_secs() < 2);
+    }
+
+    #[test]
+    fn strip_markup_keeps_generics() {
+        assert_eq!(
+            strip_markup("Using Vec<String> and <T>"),
+            "Using Vec<String> and <T>"
+        );
+        let (_, _, h, _) = outline("# Using Vec<String>\n");
+        assert_eq!(h[0].text, "Using Vec<String>");
     }
 
     #[test]

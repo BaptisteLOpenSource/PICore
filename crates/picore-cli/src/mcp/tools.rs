@@ -278,7 +278,9 @@ mod tests {
         );
         let id = id.to_owned();
         s.get_project_context(&id).unwrap();
-        s.get_project_section(&id, "README.md", "x").ok();
+        if let Err(e) = s.get_project_section(&id, "README.md", "x") {
+            assert!(!matches!(&e, Error::NotFound(m) if *m == id), "{e}");
+        }
         assert_eq!(s.list_worktrees(&id).unwrap().len(), 1);
         let h = s.get_health(Some(&id)).unwrap();
         assert_eq!(h["project"]["remote"]["status"], "unknown");
