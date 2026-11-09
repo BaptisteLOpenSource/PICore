@@ -90,7 +90,7 @@ path (`<project>.worktrees/<issue>-<slug>`) from the issue title, fetched with `
 Project. It creates nothing; the project defaults to the current directory.
 
 Config and Index live in XDG paths: `~/.config/picore/config.toml` and
-`~/.local/share/picore/picore.db`. Set `PICORE_CONFIG_DIR` and `PICORE_DATA_DIR` to override.
+`~/.local/share/picore/picore-v<schema>.db` (one file per schema version). Set `PICORE_CONFIG_DIR` and `PICORE_DATA_DIR` to override.
 
 ## Usage
 

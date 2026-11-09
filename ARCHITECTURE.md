@@ -53,4 +53,4 @@ nothing about SQLite, processes or the filesystem. Adapters own those:
 ## Data locations (XDG)
 
 - Config: `~/.config/picore/config.toml`
-- Index: `~/.local/share/picore/picore.db`
+- Index: `~/.local/share/picore/picore-v<schema>.db`, one file per schema version

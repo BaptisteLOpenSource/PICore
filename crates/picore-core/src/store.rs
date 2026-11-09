@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS project(id TEXT PRIMARY KEY, name TEXT NOT NULL, work
 CREATE TABLE IF NOT EXISTS worktree(path TEXT NOT NULL, project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE, branch TEXT, head TEXT, is_main INTEGER NOT NULL, detached INTEGER NOT NULL, locked INTEGER NOT NULL, last_commit_at INTEGER, PRIMARY KEY(project_id, path));
 ";
 
-const VERSION: i64 = 3;
+pub const VERSION: i64 = 3;
 
 pub struct Index {
     conn: Connection,

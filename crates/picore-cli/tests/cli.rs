@@ -68,6 +68,26 @@ fn json_envelope_on_list() {
 }
 
 #[test]
+fn index_never_touches_another_schema_version_file() {
+    let sb = Sandbox::new();
+    sb.repo("code/a");
+    let data = sb.path().join("data");
+    fs::create_dir_all(&data).unwrap();
+    // Stand-in for a v2 index another installed picore still uses.
+    let old = data.join("picore.db");
+    fs::write(&old, "v2 index").unwrap();
+    assert!(
+        sb.picore(&["root", "add", s(&sb.path().join("code"))])
+            .status
+            .success()
+    );
+    assert!(sb.picore(&["index"]).status.success());
+    assert_eq!(fs::read_to_string(&old).unwrap(), "v2 index");
+    let current = format!("picore-v{}.db", picore_core::store::VERSION);
+    assert!(data.join(current).is_file());
+}
+
+#[test]
 fn piped_output_has_no_mascot() {
     let sb = Sandbox::new();
     sb.repo("code/a");

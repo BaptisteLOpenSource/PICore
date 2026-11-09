@@ -27,7 +27,8 @@ impl Paths {
         };
         Ok(Paths {
             config_file: config_dir.join("config.toml"),
-            index_file: data_dir.join("picore.db"),
+            // Per schema: older picore builds still running must not drop our tables.
+            index_file: data_dir.join(format!("picore-v{}.db", crate::store::VERSION)),
         })
     }
 }
