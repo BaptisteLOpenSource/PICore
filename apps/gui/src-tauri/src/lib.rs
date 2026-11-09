@@ -176,13 +176,23 @@ mod commands {
 }
 
 fn watch_config(app: &AppHandle, config_file: &Path) -> Result<RecommendedWatcher, String> {
+    let handle = app.clone();
+    watch(config_file, move || {
+        let _ = handle.emit("config-changed", ());
+    })
+}
+
+fn watch(
+    config_file: &Path,
+    on_change: impl Fn() + Send + 'static,
+) -> Result<RecommendedWatcher, String> {
     let dir = config_file.parent().ok_or("config path has no parent")?;
     fs::create_dir_all(dir).map_err(err)?;
     let target = config_file.to_path_buf();
-    let handle = app.clone();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        if matches!(event, Ok(e) if e.paths.contains(&target)) {
-            let _ = handle.emit("config-changed", ());
+        // inotify reports opens too: our own config reads would loop refresh.
+        if matches!(event, Ok(e) if !e.kind.is_access() && e.paths.contains(&target)) {
+            on_change();
         }
     })
     .map_err(err)?;
@@ -346,6 +356,24 @@ mod tests {
         cfg.save(&paths.config_file).unwrap();
         let ov = overview(&paths, true).unwrap();
         assert_eq!(ov.projects.len(), 2);
+    }
+
+    #[test]
+    fn config_watch_ignores_reads_and_sees_writes() {
+        let (_tmp, paths, src) = setup();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _w = watch(&paths.config_file, move || tx.send(()).unwrap()).unwrap();
+        let quiet = std::time::Duration::from_millis(300);
+        overview(&paths, false).unwrap();
+        assert!(
+            rx.recv_timeout(quiet).is_err(),
+            "a config read fired a change"
+        );
+        add_product(&paths, "prod", &src.join("prod")).unwrap();
+        assert!(
+            rx.recv_timeout(quiet).is_ok(),
+            "a config write fired nothing"
+        );
     }
 
     #[test]
