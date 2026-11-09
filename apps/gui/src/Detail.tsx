@@ -1,13 +1,30 @@
-import { For, Show } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
+import { facts, shortPath } from "./format";
 import { panel, textButton } from "./ui";
-import { detail, isWide, overview, selectedId, setSelectedId, totals } from "./store";
+import { copyText, detail, home, isWide, selectedId, setSelectedId, totals } from "./store";
 import type { Detail as DetailData } from "./types";
+
+function Copy(props: { text: string; label: string }) {
+  const [done, setDone] = createSignal(false);
+  return (
+    <button
+      type="button"
+      class={`${textButton} flex-none`}
+      onClick={async () => {
+        await copyText(props.text);
+        setDone(true);
+        setTimeout(() => setDone(false), 1500);
+      }}
+    >
+      {done() ? "Copied" : props.label}
+    </button>
+  );
+}
 
 function Info(props: { data: DetailData }) {
   const ctx = () => props.data.context;
   const health = () => props.data.health;
-  const product = () => overview().projects.find((p) => p.id === selectedId())?.product;
   const figures = () => {
     const t = totals(health());
     return [
@@ -16,13 +33,7 @@ function Info(props: { data: DetailData }) {
       { label: "Behind", value: t.behind },
     ];
   };
-  const facts = () => [
-    { label: "Product", value: product() ?? "-", mono: false },
-    { label: "Branch", value: ctx().branch ?? "-", mono: true },
-    { label: "Upstream", value: health().worktrees[0]?.upstream ?? "No upstream", mono: true },
-    { label: "Remote", value: health().remote?.message ?? "-", mono: false },
-    { label: "Techs", value: ctx().techs.join(", ") || "-", mono: false },
-  ];
+  const pruneCmd = () => `picore prune '${(selectedId() ?? "").replaceAll("'", "'\\''")}'`;
 
   return (
     <div class="flex flex-col gap-6">
@@ -30,8 +41,11 @@ function Info(props: { data: DetailData }) {
         <Dynamic component={isWide() ? "h2" : "h1"} class="truncate text-[20px] font-semibold leading-tight">
           {ctx().name}
         </Dynamic>
-        <p class="mt-1 truncate font-mono text-[12px] text-muted" title={selectedId() ?? ""}>
-          {selectedId()}
+        <p class="mt-1 flex items-baseline justify-between gap-3">
+          <span class="min-w-0 truncate font-mono text-[12px] text-muted" title={selectedId() ?? ""}>
+            {shortPath(selectedId() ?? "", home())}
+          </span>
+          <Copy text={selectedId() ?? ""} label="Copy path" />
         </p>
       </header>
 
@@ -47,7 +61,7 @@ function Info(props: { data: DetailData }) {
       </dl>
 
       <dl class="flex flex-col">
-        <For each={facts()}>
+        <For each={facts(props.data)}>
           {(f) => (
             <div class="flex min-h-[28px] items-baseline justify-between gap-4 border-b border-rule py-1.5">
               <dt class="shrink-0 text-[12px] text-muted">{f.label}</dt>
@@ -65,19 +79,40 @@ function Info(props: { data: DetailData }) {
         </h3>
         <ul class={`${panel} flex flex-col divide-y divide-rule px-4`}>
           <For each={ctx().worktrees}>
-            {(w) => (
-              <li class="flex min-h-[44px] flex-col justify-center py-2">
-                <span class="flex items-center gap-2">
-                  <span class="min-w-0 truncate font-mono text-[13px]" title={w.path}>{w.path}</span>
-                  <Show when={w.is_main}>
-                    <span class="flex-none rounded bg-raised px-1.5 py-0.5 text-[11px] text-muted">main</span>
+            {(w) => {
+              const verdict = () => props.data.prune.find((a) => a.path === w.path);
+              const error = () => health().worktrees.find((h) => h.path === w.path)?.error;
+              return (
+                <li class="flex min-h-[44px] flex-col justify-center gap-0.5 py-2">
+                  <span class="flex items-center gap-2">
+                    <span class="min-w-0 flex-1 truncate font-mono text-[13px]" title={w.path}>
+                      {shortPath(w.path, home())}
+                    </span>
+                    <Show when={w.is_main}>
+                      <span class="flex-none rounded bg-raised px-1.5 py-0.5 text-[11px] text-muted">main</span>
+                    </Show>
+                    <Copy text={w.path} label="Copy path" />
+                  </span>
+                  <span class="flex items-center gap-2 font-mono text-[12px] text-muted">
+                    <span class="min-w-0 truncate" title={w.branch ?? ""}>
+                      {w.branch ?? (w.detached ? "detached" : "-")}
+                    </span>
+                    <Show when={w.issue}>{(n) => <span class="flex-none text-text">#{n()}</span>}</Show>
+                  </span>
+                  <Show when={error()}>{(e) => <span class="text-[12px] text-alert">{e()}</span>}</Show>
+                  <Show when={verdict()?.verdict === "prunable" && verdict()}>
+                    {(a) => (
+                      <span class="flex items-center justify-between gap-2 text-[12px]">
+                        <span class="text-brand">
+                          Prunable ({a().reason}): <code class="font-mono text-muted">picore prune</code>
+                        </span>
+                        <Copy text={pruneCmd()} label="Copy command" />
+                      </span>
+                    )}
                   </Show>
-                </span>
-                <span class="font-mono text-[12px] text-muted">
-                  {w.branch ?? (w.detached ? "detached" : "-")}
-                </span>
-              </li>
-            )}
+                </li>
+              );
+            }}
           </For>
         </ul>
       </section>

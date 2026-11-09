@@ -46,7 +46,7 @@ export function App() {
               <svg viewBox="0 0 16 16" class="h-4 w-4" aria-hidden="true">
                 <path d={icons[v]} stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none" />
               </svg>
-              <span class="text-[11px] sm:sr-only">{v === "projects" ? "Projects" : "Settings"}</span>
+              <span class="text-[11px]">{v === "projects" ? "Projects" : "Settings"}</span>
             </button>
           )}
         </For>

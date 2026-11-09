@@ -1,53 +1,95 @@
 import { createSignal, For, Show } from "solid-js";
+import { shortPath, sync } from "./format";
 import { button, selected } from "./ui";
-import { groupByProduct, machine, needsAttention, overview, refresh, refreshing, selectedId, setSelectedId, totals } from "./store";
+import {
+  groupByProduct,
+  home,
+  machine,
+  needsAttention,
+  overview,
+  refresh,
+  refreshing,
+  selectedId,
+  setSelectedId,
+  totals,
+} from "./store";
 import type { Listed } from "./types";
 
 function finding(projects: Listed[]): string {
   const n = projects.filter((p) => needsAttention(p.health)).length;
   if (!projects.length) return "No project indexed yet. Add a scan root in Settings.";
   if (!n) return `All ${projects.length} projects are clean and in sync.`;
-  const t = projects.flatMap((p) => (p.health ? [totals(p.health)] : []));
+  const t = projects.map((p) => totals(p.health));
   const dirty = t.filter((x) => x.dirty).length;
   const ahead = t.filter((x) => x.ahead).length;
   const behind = t.filter((x) => x.behind).length;
+  const broken = projects.filter((p) => p.health.worktrees.some((w) => w.error)).length;
   const parts = [
     dirty && `${dirty} with local changes`,
     ahead && `${ahead} ahead of upstream`,
     behind && `${behind} behind upstream`,
+    broken && `${broken} with errors`,
   ].filter(Boolean);
   return `${n} of ${projects.length} need attention: ${parts.join(", ")}.`;
 }
 
-function Count(props: { value: number | null | undefined; class?: string }) {
+function Sync(props: { project: Listed }) {
+  const errors = () => props.project.health.worktrees.flatMap((w) => w.error ?? []);
+  const s = () => sync(totals(props.project.health));
   return (
-    <td class={`text-right ${props.class ?? "px-3"} ${props.value ? "text-text" : "text-muted"}`}>
-      {props.value ?? "-"}
+    <td class="pl-3 pr-8 text-right">
+      <Show
+        when={errors().length === 0}
+        fallback={
+          <span class="text-alert" title={errors().join("\n")}>
+            error
+          </span>
+        }
+      >
+        <Show when={s()}>{(x) => <span aria-label={x().label}>{x().text}</span>}</Show>
+      </Show>
     </td>
   );
 }
 
+// Up/Down walk the project buttons, so the list never needs one Tab per row.
+function walk(e: KeyboardEvent) {
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  const rows = [...(e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>("[data-row]")];
+  const next = rows[rows.indexOf(document.activeElement as HTMLElement) + (e.key === "ArrowDown" ? 1 : -1)];
+  if (!next) return;
+  e.preventDefault();
+  next.focus();
+}
+
 function Row(props: { project: Listed }) {
-  const h = () => (props.project.health ? totals(props.project.health) : undefined);
+  const dirty = () => totals(props.project.health).dirty;
   return (
     <tr
       aria-selected={selectedId() === props.project.id}
       class="relative h-[52px] border-b sm:h-[42px] border-rule hover:bg-raised/50 aria-[selected=true]:bg-raised"
     >
-      <td class="max-w-0 w-[45%] pl-8 pr-3">
+      <td class="max-w-0 w-[40%] pl-8 pr-3">
         <button
           type="button"
+          data-row
           onClick={() => setSelectedId(props.project.id)}
           class="block w-full truncate text-left after:absolute after:inset-0 after:content-['']"
         >
           {props.project.name}
         </button>
-        <span class="block truncate font-mono text-[12px] text-muted sm:hidden">{props.project.branch ?? "-"}</span>
+        <span class="block truncate font-mono text-[12px] text-muted sm:hidden" title={props.project.branch ?? ""}>
+          {props.project.branch ?? "-"}
+        </span>
       </td>
-      <td class="hidden max-w-0 truncate px-3 font-mono text-[13px] text-muted sm:table-cell">{props.project.branch ?? "-"}</td>
-      <Count value={h()?.dirty} />
-      <Count value={h()?.ahead} />
-      <Count value={h()?.behind} class="pl-3 pr-8" />
+      <td
+        class="hidden max-w-0 truncate px-3 font-mono text-[13px] text-muted sm:table-cell"
+        title={props.project.branch ?? ""}
+      >
+        {props.project.branch ?? "-"}
+      </td>
+      <td class="px-3 text-right">{dirty() || ""}</td>
+      <Sync project={props.project} />
     </tr>
   );
 }
@@ -107,24 +149,27 @@ export function List() {
         </For>
       </div>
 
-      <table class="w-full table-fixed border-collapse text-[13px]">
+      <table class="w-full table-fixed border-collapse text-[13px]" onKeyDown={walk}>
         <thead>
           <tr class="h-10 text-[12px] text-muted">
-            <th scope="col" class="w-[45%] pl-8 pr-3 text-left font-normal">Project</th>
+            <th scope="col" class="w-[40%] pl-8 pr-3 text-left font-normal">Project</th>
             <th scope="col" class="hidden px-3 text-left font-normal sm:table-cell">Branch</th>
             <th scope="col" class="w-20 px-3 text-right font-normal sm:w-24">Changes</th>
-            <th scope="col" class="w-16 px-3 text-right font-normal sm:w-20">Ahead</th>
-            <th scope="col" class="w-20 pl-3 pr-8 text-right font-normal sm:w-24">Behind</th>
+            <th scope="col" class="w-24 pl-3 pr-8 text-right font-normal">Sync</th>
           </tr>
         </thead>
         <For each={groups()}>
           {(group) => (
             <tbody>
               <tr>
-                <th scope="colgroup" colspan="5" class="pl-8 pr-8 pb-2 pt-5 text-left font-normal">
+                <th scope="colgroup" colspan="4" class="pl-8 pr-8 pb-2 pt-5 text-left font-normal">
                   <span class="text-[12px] text-muted">{group.product ?? "No product"}</span>
                   <Show when={group.path}>
-                    {(p) => <span class="ml-2 font-mono text-[11px] text-muted/70">{p()}</span>}
+                    {(p) => (
+                      <span class="ml-2 font-mono text-[11px] text-muted" title={p()}>
+                        {shortPath(p(), home())}
+                      </span>
+                    )}
                   </Show>
                 </th>
               </tr>

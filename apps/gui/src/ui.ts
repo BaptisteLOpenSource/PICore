@@ -1,10 +1,10 @@
 const control =
   "inline-flex h-[34px] shrink-0 items-center justify-center rounded-full px-4 text-[13px] transition-colors " +
-  "disabled:cursor-not-allowed disabled:opacity-50";
+  "disabled:cursor-not-allowed disabled:text-muted";
 
-export const button = `${control} border border-control text-text hover:border-muted active:bg-raised`;
+export const button = `${control} border border-control text-text enabled:hover:border-muted enabled:active:bg-raised`;
 
-export const primaryButton = `${control} bg-text text-bg hover:bg-text/90`;
+export const primaryButton = `${control} bg-text text-bg enabled:hover:bg-text/90 disabled:bg-raised`;
 
 export const textButton = "text-[13px] text-muted underline-offset-4 hover:text-text hover:underline";
 

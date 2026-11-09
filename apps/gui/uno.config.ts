@@ -9,7 +9,7 @@ body{font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased;
   font-variant-numeric:tabular-nums}
 button,input{font:inherit;color:inherit;background:transparent}
 button:not(:disabled){cursor:pointer}
-:focus-visible{outline:1px solid ${colors.brand};outline-offset:2px}
+:focus-visible{outline:2px solid ${colors.brand};outline-offset:2px}
 ::selection{background:${colors.brand}55}
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-thumb{background:${colors.raised};border:3px solid ${colors.bg};border-radius:9999px}

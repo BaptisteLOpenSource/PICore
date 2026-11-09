@@ -15,6 +15,7 @@ export type Worktree = {
   detached: boolean;
   locked: boolean;
   last_commit_at: number | null;
+  issue: number | null;
 };
 
 export type WorktreeHealth = {
@@ -70,7 +71,17 @@ export type Overview = {
   warnings: string[];
 };
 
+// Rust `prune::Assessment`, verdict tag flattened.
+export type Assessment = {
+  path: string;
+  branch: string | null;
+  verdict: "prunable" | "kept" | "unknown";
+  reason: string;
+  stale: boolean;
+};
+
 export type Detail = {
   context: ProjectContext;
   health: ProjectHealth;
+  prune: Assessment[];
 };
