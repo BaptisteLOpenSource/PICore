@@ -2556,6 +2556,7 @@ name = "picore-core"
 version = "0.1.0"
 dependencies = [
  "directories",
+ "libc",
  "rusqlite",
  "serde",
  "serde_json",

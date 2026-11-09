@@ -40,7 +40,11 @@ pub fn run_env(
     timeout: Duration,
 ) -> Result<String, ProcError> {
     let start = Instant::now();
-    let mut child = Command::new(program)
+    let mut cmd = Command::new(program);
+    // Own process group: a timeout must also kill grandchildren (git -> ssh).
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+    let mut child = cmd
         .args(args)
         .current_dir(cwd)
         .envs(env.iter().copied())
@@ -60,6 +64,7 @@ pub fn run_env(
     let stderr_reader = drain(child.stderr.take().expect("stderr is piped"));
 
     let Some(status) = child.wait_timeout(timeout)? else {
+        kill_group(child.id());
         child.kill()?;
         child.wait()?;
         return Err(ProcError::Timeout);
@@ -67,8 +72,12 @@ pub fn run_env(
 
     // A grandchild can hold the pipes open after the child exits: bound the reads by the deadline.
     let deadline = start + timeout;
-    let stdout = collect(&stdout_reader, deadline)?;
-    let stderr = collect(&stderr_reader, deadline)?;
+    let collected = collect(&stdout_reader, deadline)
+        .and_then(|out| collect(&stderr_reader, deadline).map(|err| (out, err)));
+    if collected.is_err() {
+        kill_group(child.id());
+    }
+    let (stdout, stderr) = collected?;
     if status.success() {
         Ok(String::from_utf8_lossy(&stdout).into_owned())
     } else {
@@ -78,6 +87,15 @@ pub fn run_env(
         })
     }
 }
+
+#[cfg(unix)]
+fn kill_group(pid: u32) {
+    // SAFETY: plain syscall; pgid = child pid via process_group(0).
+    unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
+}
+
+#[cfg(not(unix))]
+fn kill_group(_pid: u32) {}
 
 fn drain<R: Read + Send + 'static>(mut pipe: R) -> Receiver<io::Result<Vec<u8>>> {
     let (tx, rx) = mpsc::channel();
@@ -137,6 +155,30 @@ mod tests {
             Err(ProcError::Timeout)
         ));
         assert!(t.elapsed() < Duration::from_secs(3));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_kills_grandchildren() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("pid");
+        let script = format!("sleep 30 & echo $! > {}; wait", pid_file.display());
+        assert!(matches!(
+            run(
+                "sh",
+                dir.path(),
+                &["-c", &script],
+                Duration::from_millis(300)
+            ),
+            Err(ProcError::Timeout)
+        ));
+        let pid = std::fs::read_to_string(&pid_file).unwrap();
+        let alive = || run("kill", dir.path(), &["-0", pid.trim()], TIMEOUT).is_ok();
+        let t = Instant::now();
+        while alive() && t.elapsed() < Duration::from_secs(2) {
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!alive(), "grandchild {pid} survived");
     }
 
     #[test]
