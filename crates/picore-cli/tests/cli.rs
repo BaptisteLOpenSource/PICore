@@ -1,3 +1,7 @@
+#[allow(dead_code)] // shared helpers, not all used here
+#[path = "../../picore-core/tests/support/mod.rs"]
+mod support;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -139,34 +143,9 @@ fn git(dir: &Path, args: &[&str]) -> String {
     process::run("git", dir, args, TIMEOUT).unwrap()
 }
 
-// Plumbing only: `git commit` would run the global hooks, which reject commits on main.
 fn commit(repo: &Path, msg: &str) {
     fs::write(repo.join("f.txt"), msg).unwrap();
-    git(repo, &["add", "-A"]);
-    let tree = git(repo, &["write-tree"]);
-    let parent = process::run(
-        "git",
-        repo,
-        &["rev-parse", "--verify", "-q", "HEAD"],
-        TIMEOUT,
-    )
-    .ok()
-    .map(|p| p.trim().to_owned());
-    let mut args = vec![
-        "-c",
-        "user.name=PICore Test",
-        "-c",
-        "user.email=test@picore.invalid",
-        "commit-tree",
-        tree.trim(),
-        "-m",
-        msg,
-    ];
-    if let Some(p) = parent.as_deref() {
-        args.extend(["-p", p]);
-    }
-    let sha = git(repo, &args).trim().to_owned();
-    git(repo, &["update-ref", "HEAD", &sha]);
+    support::commit_in(repo, msg, None);
 }
 
 // `merged` is an ancestor of main (prunable), `dirty` has an untracked file (kept).
@@ -386,19 +365,8 @@ fn status_json_has_machine_checks() {
 fn status_by_worktree_subdir_reports_each_worktree_and_remote() {
     let sb = Sandbox::new();
     let a = sb.repo("code/a");
+    support::commit_in(&a, "i", None);
     let git = |args: &[&str]| process::run("git", &a, args, TIMEOUT).unwrap();
-    let empty_tree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-    let sha = git(&[
-        "-c",
-        "user.name=t",
-        "-c",
-        "user.email=t@t",
-        "commit-tree",
-        empty_tree,
-        "-m",
-        "i",
-    ]);
-    git(&["update-ref", "HEAD", sha.trim()]);
     git(&["remote", "add", "origin", "/picore-no-such/x.git"]);
     let wt = sb.path().join("wt");
     git(&["worktree", "add", "-q", "-b", "feat", s(&wt)]);

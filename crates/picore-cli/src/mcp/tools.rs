@@ -169,6 +169,11 @@ impl Server {
 }
 
 #[cfg(test)]
+#[allow(dead_code)] // shared helpers, not all used here
+#[path = "../../../picore-core/tests/support/mod.rs"]
+mod support;
+
+#[cfg(test)]
 mod tests {
     use std::process::Command;
 
@@ -241,22 +246,11 @@ mod tests {
         let (_, id) = git_project(&dir, &s);
         let repo = dir.path().join("repo");
         let wt = dir.path().join("wt");
+        support::commit_in(&repo, "i", None);
         let git = |args: &[&str]| {
             let out = Command::new("git").current_dir(&repo).args(args).output();
             String::from_utf8(out.unwrap().stdout).unwrap()
         };
-        let empty_tree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-        let sha = git(&[
-            "-c",
-            "user.name=t",
-            "-c",
-            "user.email=t@t",
-            "commit-tree",
-            empty_tree,
-            "-m",
-            "i",
-        ]);
-        git(&["update-ref", "HEAD", sha.trim()]);
         git(&["worktree", "add", "-q", "-b", "feat", wt.to_str().unwrap()]);
         s.index.lock().unwrap().upsert(&scan(&id).unwrap()).unwrap();
         assert_eq!(s.lookup(wt.to_str().unwrap()).unwrap().id, id);
