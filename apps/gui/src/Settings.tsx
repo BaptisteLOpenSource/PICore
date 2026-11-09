@@ -1,8 +1,10 @@
 import { For, type JSX, Show } from "solid-js";
 import { ProductForm } from "./ProductForm";
 import { Roots } from "./Roots";
-import { dangerButton, panel } from "./ui";
-import { deleteProduct, machine, overview } from "./store";
+import { Remove } from "./Remove";
+import { shortPath } from "./format";
+import { button, panel } from "./ui";
+import { checkMachine, checking, deleteProduct, home, machine, overview } from "./store";
 import type { Status } from "./types";
 
 const pill: Record<Status, string> = {
@@ -23,12 +25,6 @@ function Row(props: { title: string; text: string; children: JSX.Element }) {
   );
 }
 
-function confirmDelete(name: string) {
-  if (confirm(`Remove product ${name}? Only its config entry goes, folders are untouched.`)) {
-    void deleteProduct(name);
-  }
-}
-
 export function Settings() {
   const products = () => Object.entries(overview().products).sort(([a], [b]) => a.localeCompare(b));
   return (
@@ -47,11 +43,11 @@ export function Settings() {
                 <li class="flex min-h-[44px] items-center justify-between gap-4 py-2">
                   <span class="min-w-0">
                     <span class="block text-[13px]">{name}</span>
-                    <span class="block truncate font-mono text-[12px] text-muted">{path}</span>
+                    <span class="block truncate font-mono text-[12px] text-muted" title={path}>
+                      {shortPath(path, home())}
+                    </span>
                   </span>
-                  <button type="button" class={dangerButton} onClick={() => confirmDelete(name)}>
-                    Remove
-                  </button>
+                  <Remove what={name} onConfirm={() => void deleteProduct(name)} />
                 </li>
               )}
             </For>
@@ -59,7 +55,7 @@ export function Settings() {
           <ProductForm />
         </Row>
 
-        <Row title="Machine" text="The tools PICore calls. Checked once at start.">
+        <Row title="Machine" text="The tools PICore calls. Checked at start and on demand.">
           <ul class="flex flex-col divide-y divide-rule">
             <For each={machine()}>
               {(c) => (
@@ -76,6 +72,11 @@ export function Settings() {
               )}
             </For>
           </ul>
+          <div>
+            <button type="button" class={button} disabled={checking()} onClick={() => void checkMachine()}>
+              {checking() ? "Checking..." : "Check again"}
+            </button>
+          </div>
         </Row>
     </div>
   );

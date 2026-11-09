@@ -15,6 +15,7 @@ allow = [
     "Zlib", # foldhash
     "CC0-1.0", # notify
     "Apache-2.0 WITH LLVM-exception", # target-lexicon
+    "BSL-1.0", # clipboard-win, error-code (tauri clipboard plugin, windows)
 ]
 
 [bans]

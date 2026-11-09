@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS project(id TEXT PRIMARY KEY, name TEXT NOT NULL, work
 CREATE TABLE IF NOT EXISTS worktree(path TEXT NOT NULL, project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE, branch TEXT, head TEXT, is_main INTEGER NOT NULL, detached INTEGER NOT NULL, locked INTEGER NOT NULL, last_commit_at INTEGER, PRIMARY KEY(project_id, path));
 ";
 
-const VERSION: i64 = 3;
+pub const VERSION: i64 = 3;
 
 pub struct Index {
     conn: Connection,
@@ -113,21 +113,6 @@ impl Index {
             worktrees: self.worktrees_of(id)?,
             stamp,
         }))
-    }
-
-    pub fn find(&self, path: &Path) -> Result<Option<Project>> {
-        let Ok(path) = path.canonicalize() else {
-            return Ok(None);
-        };
-        let id: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT id FROM project WHERE id = ?1 OR work_tree = ?1",
-                [text(&path)?],
-                |r| r.get(0),
-            )
-            .optional()?;
-        id.map_or(Ok(None), |id| self.get(&ProjectId(PathBuf::from(id))))
     }
 
     pub fn all(&self) -> Result<Vec<Project>> {

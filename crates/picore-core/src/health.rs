@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
@@ -25,11 +25,20 @@ pub struct Check {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ProjectHealth {
-    pub dirty: u32,
-    pub ahead: u32,
-    pub behind: u32,
+pub struct WorktreeHealth {
+    pub path: PathBuf,
+    pub branch: Option<String>,
+    // None = unknown (see `error`); ahead/behind None also = no upstream.
+    pub dirty: Option<u32>,
+    pub ahead: Option<u32>,
+    pub behind: Option<u32>,
     pub upstream: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProjectHealth {
+    pub worktrees: Vec<WorktreeHealth>,
     pub remote: Option<Check>,
 }
 
@@ -125,26 +134,36 @@ pub fn machine_health() -> Vec<Check> {
     ]
 }
 
-pub fn project_health(p: &Project, remote: bool) -> Result<ProjectHealth> {
-    let mut h = ProjectHealth {
-        dirty: 0,
-        ahead: 0,
-        behind: 0,
-        upstream: None,
-        remote: None,
-    };
-    if let Some(wt) = &p.work_tree {
-        let s = git::status(wt)?;
-        h.dirty = s.changes;
-        h.ahead = s.ahead;
-        h.behind = s.behind;
-        h.upstream = s.upstream;
-    }
-    if remote {
-        let dir = p.work_tree.as_deref().unwrap_or(&p.id.0);
-        h.remote = Some(classify_remote(git::ls_remote(dir)));
-    }
-    Ok(h)
+pub fn project_health(p: &Project, remote: bool) -> ProjectHealth {
+    let worktrees = p
+        .worktrees
+        .iter()
+        .map(|w| {
+            let mut row = WorktreeHealth {
+                path: w.path.clone(),
+                branch: w.branch.clone(),
+                dirty: None,
+                ahead: None,
+                behind: None,
+                upstream: None,
+                error: None,
+            };
+            if !w.path.is_dir() {
+                row.error = Some("directory missing: see `picore prune`".into());
+                return row;
+            }
+            match git::status(&w.path) {
+                Ok(s) => {
+                    row.dirty = Some(s.changes);
+                    (row.ahead, row.behind, row.upstream) = (s.ahead, s.behind, s.upstream);
+                }
+                Err(e) => row.error = Some(e.to_string()),
+            }
+            row
+        })
+        .collect();
+    let remote = remote.then(|| classify_remote(git::ls_remote(p.path())));
+    ProjectHealth { worktrees, remote }
 }
 
 #[cfg(test)]

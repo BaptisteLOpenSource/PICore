@@ -4,7 +4,6 @@ use std::fs;
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::CommandFactory;
 use clap_complete::Shell;
@@ -18,6 +17,7 @@ use picore_core::prune::{self, Assessment, Blocker, Verdict};
 use picore_core::refresh::{index_all, refresh_all};
 use picore_core::resolve::{Resolution, Target, qualified, resolve};
 use picore_core::store::Index;
+use picore_core::view::{self, ProjectView};
 use picore_core::wtname;
 use serde::Serialize;
 
@@ -46,7 +46,7 @@ pub fn run(json: bool, quiet: bool, cmd: &Cmd) -> ExitCode {
     };
     result.unwrap_or_else(|e| match e {
         Error::Ambiguous(candidates) => fail(json, "ambiguous", "ambiguous name", &candidates),
-        e => fail(json, code_of(&e), &e.to_string(), &[]),
+        e => fail(json, e.code(), &e.to_string(), &[]),
     })
 }
 
@@ -58,17 +58,6 @@ fn completions(shell: Shell) -> Result<ExitCode> {
 fn man() -> Result<ExitCode> {
     clap_mangen::Man::new(Cli::command()).render(&mut io::stdout())?;
     Ok(ExitCode::SUCCESS)
-}
-
-fn code_of(e: &Error) -> &'static str {
-    match e {
-        Error::Proc(_) => "git",
-        Error::Gh(_) => "gh",
-        Error::Config(_) => "config",
-        Error::NotFound(_) => "not_found",
-        Error::Ambiguous(_) => "ambiguous",
-        Error::Store(_) | Error::Io(_) => "io",
-    }
 }
 
 fn root(json: bool, action: &RootCmd) -> Result<ExitCode> {
@@ -148,60 +137,59 @@ fn confirm(prompt: &str) -> io::Result<bool> {
     ))
 }
 
-fn refreshed(paths: &Paths) -> Result<Vec<Project>> {
-    let (projects, failed) = refresh_all(&Index::open(&paths.index_file)?)?;
+struct Loaded {
+    cfg: Config,
+    projects: Vec<Project>,
+}
+
+/// Config (lenient: a bad one must not hide the Index) + refreshed Projects.
+fn load() -> Result<Loaded> {
+    let paths = Paths::from_env()?;
+    let (cfg, bad) = Config::load_or_default(&paths.config_file);
+    if let Some(e) = bad {
+        eprintln!("warn: {e}: products hidden");
+    }
+    let (projects, failed) = refresh_all(&Index::open(&paths.index_file)?, &cfg)?;
     for (id, e) in failed {
         eprintln!("warn: {}: {e}", id.0.display());
     }
-    Ok(projects)
+    Ok(Loaded { cfg, projects })
 }
 
-#[derive(Serialize)]
-struct Listed<'a> {
-    #[serde(flatten)]
-    project: &'a Project,
-    product: Option<&'a str>,
+fn exit(failed: bool) -> ExitCode {
+    if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
 fn list(json: bool) -> Result<ExitCode> {
-    let paths = Paths::from_env()?;
-    // bad config must not hide the list: drop products, keep going
-    let cfg = Config::load(&paths.config_file).unwrap_or_else(|e| {
-        eprintln!("warn: {e}: products hidden");
-        Config::default()
-    });
-    let projects = refreshed(&paths)?;
-    if projects.is_empty() {
+    let l = load()?;
+    if l.projects.is_empty() {
         eprintln!("no projects indexed: run `picore index`");
     }
-    let listed: Vec<Listed> = projects
-        .iter()
-        .map(|p| Listed {
-            project: p,
-            product: cfg.product_of(project_dir(&p.id)),
-        })
-        .collect();
-    emit(json, &listed, |l| print_table(l));
+    emit(json, &view::list(&l.projects, &l.cfg), |v| print_table(v));
     Ok(ExitCode::SUCCESS)
 }
 
 /// Products by name, members by name, then ungrouped Projects by name.
-fn grouped<'a, 'b>(listed: &'b [Listed<'a>]) -> Vec<(Option<&'a str>, Vec<&'b Listed<'a>>)> {
-    let mut by_product: BTreeMap<Option<&str>, Vec<&Listed>> = BTreeMap::new();
+fn grouped(listed: &[ProjectView]) -> Vec<(Option<&str>, Vec<&ProjectView>)> {
+    let mut by_product: BTreeMap<Option<&str>, Vec<&ProjectView>> = BTreeMap::new();
     for l in listed {
-        by_product.entry(l.product).or_default().push(l);
+        by_product.entry(l.product.as_deref()).or_default().push(l);
     }
     let mut groups: Vec<_> = by_product.into_iter().collect();
     // BTreeMap puts None first: ungrouped goes last
     let shift = usize::from(groups.first().is_some_and(|g| g.0.is_none()));
     groups.rotate_left(shift);
     for (_, members) in &mut groups {
-        members.sort_by(|a, b| a.project.name.cmp(&b.project.name));
+        members.sort_by(|a, b| a.name.cmp(&b.name));
     }
     groups
 }
 
-fn print_table(listed: &[Listed]) {
+fn print_table(listed: &[ProjectView]) {
     if listed.is_empty() {
         return;
     }
@@ -211,27 +199,23 @@ fn print_table(listed: &[Listed]) {
         if let Some(name) = product {
             lines.push((Some(name), Default::default()));
         }
-        for l in members {
-            let p = l.project;
+        for p in members {
             let indent = if product.is_some() { "  " } else { "" };
+            let dash = |s: Option<&str>| s.unwrap_or("-").to_owned();
             lines.push((
                 None,
                 [
                     format!("{indent}{}", p.name),
-                    l.product.unwrap_or("-").into(),
-                    p.branch.clone().unwrap_or_else(|| "-".into()),
-                    p.linked_worktrees().count().to_string(),
+                    dash(p.product.as_deref()),
+                    dash(p.branch.as_deref()),
+                    p.worktrees.to_string(),
                     if p.techs.is_empty() {
                         "-".into()
                     } else {
                         p.techs.join(",")
                     },
-                    p.repo.clone().unwrap_or_else(|| "-".into()),
-                    p.work_tree
-                        .as_deref()
-                        .unwrap_or(&p.id.0)
-                        .display()
-                        .to_string(),
+                    dash(p.repo.as_deref()),
+                    p.id.display().to_string(),
                 ],
             ));
         }
@@ -270,7 +254,7 @@ struct OpenReport<'a> {
     editor: &'a [String],
 }
 
-/// Like `one`, but keeps the Worktree and lets a TTY pick among candidates.
+/// The one CLI resolver: name, `parent/name`, path or `name@N`; a TTY picks among candidates.
 fn target<'a>(json: bool, projects: &'a [Project], query: &str) -> Result<Target<'a>> {
     match resolve(projects, query) {
         Resolution::Many(hits) if !json && io::stdin().is_terminal() => Ok(Target {
@@ -304,7 +288,7 @@ struct PathReport<'a> {
 }
 
 fn path_cmd(json: bool, name: &str) -> Result<ExitCode> {
-    let projects = refreshed(&Paths::from_env()?)?;
+    let projects = load()?.projects;
     let path = match target_dir(json, &projects, name)? {
         Ok(p) => p,
         Err(code) => return Ok(code),
@@ -316,15 +300,9 @@ fn path_cmd(json: bool, name: &str) -> Result<ExitCode> {
 }
 
 fn info_cmd(json: bool, query: &str) -> Result<ExitCode> {
-    let paths = Paths::from_env()?;
-    // bad config must not hide the info: drop products, keep going
-    let cfg = Config::load(&paths.config_file).unwrap_or_else(|e| {
-        eprintln!("warn: {e}: products hidden");
-        Config::default()
-    });
-    let projects = refreshed(&paths)?;
-    let t = target(json, &projects, query)?;
-    let report = info::info(&t, cfg.product_of(project_dir(&t.project.id)))?;
+    let l = load()?;
+    let t = target(json, &l.projects, query)?;
+    let report = info::info(&t, l.cfg.product_of(project_dir(&t.project.id)))?;
     emit(json, &report, print_info);
     Ok(ExitCode::SUCCESS)
 }
@@ -372,12 +350,12 @@ fn plain(s: &str) -> String {
 }
 
 fn wt_name(json: bool, issue: u32, project: Option<&str>) -> Result<ExitCode> {
-    let projects = refreshed(&Paths::from_env()?)?;
+    let projects = load()?.projects;
     let query = match project {
         Some(q) => q.to_owned(),
         None => env::current_dir()?.to_string_lossy().into_owned(),
     };
-    let p = one(resolve(&projects, &query), &query)?;
+    let p = target(json, &projects, &query)?.project;
     let name = wtname::for_issue(project_dir(&p.id), issue)?;
     emit(json, &name, |n| println!("{}\n{}", n.branch, n.path));
     Ok(ExitCode::SUCCESS)
@@ -398,13 +376,7 @@ fn init(shell: InitShell) -> Result<ExitCode> {
 }
 
 fn open(json: bool, name: &str) -> Result<ExitCode> {
-    let paths = Paths::from_env()?;
-    // bad config must not hide the list: drop products, keep going
-    let cfg = Config::load(&paths.config_file).unwrap_or_else(|e| {
-        eprintln!("warn: {e}: products hidden");
-        Config::default()
-    });
-    let projects = refreshed(&paths)?;
+    let Loaded { cfg, projects } = load()?;
     let path = match target_dir(json, &projects, name)? {
         Ok(p) => p,
         Err(code) => return Ok(code),
@@ -470,10 +442,6 @@ fn gui(json: bool) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn one<'a>(r: Resolution<'a>, query: &str) -> Result<&'a Project> {
-    r.into_target(query).map(|t| t.project)
-}
-
 fn pick(hits: Vec<&Project>) -> Result<&Project> {
     for (i, p) in hits.iter().enumerate() {
         eprintln!("  {}) {}", i + 1, qualified(p));
@@ -495,6 +463,7 @@ fn pick(hits: Vec<&Project>) -> Result<&Project> {
 struct StatusRow<'a> {
     name: &'a str,
     path: &'a Path,
+    #[serde(flatten)]
     health: ProjectHealth,
 }
 
@@ -505,22 +474,22 @@ struct StatusReport<'a> {
 }
 
 fn status(json: bool, name: Option<&str>, remote: bool) -> Result<ExitCode> {
-    let paths = Paths::from_env()?;
-    let projects = refreshed(&paths)?;
+    let projects = load()?.projects;
     let selected: Vec<&Project> = match name {
-        Some(q) => vec![one(resolve(&projects, q), q)?],
+        Some(q) => vec![target(json, &projects, q)?.project],
         None => projects.iter().collect(),
     };
-    let rows = selected
+    let rows: Vec<StatusRow> = selected
         .iter()
-        .map(|p| {
-            project_health(p, remote).map(|health| StatusRow {
-                name: &p.name,
-                path: p.work_tree.as_deref().unwrap_or(p.id.0.as_path()),
-                health,
-            })
+        .map(|p| StatusRow {
+            name: &p.name,
+            path: p.path(),
+            health: project_health(p, remote),
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect();
+    let failed = rows
+        .iter()
+        .any(|r| r.health.worktrees.iter().any(|w| w.error.is_some()));
     let report = StatusReport {
         machine: machine_health(),
         projects: rows,
@@ -530,33 +499,33 @@ fn status(json: bool, name: Option<&str>, remote: bool) -> Result<ExitCode> {
             println!("{}: {:?} {}", c.name, c.status, c.message);
         }
         for p in &r.projects {
-            println!(
-                "{}: dirty {} ahead {} behind {}",
-                p.name, p.health.dirty, p.health.ahead, p.health.behind
-            );
+            if let Some(c) = &p.health.remote {
+                println!("{}: remote {:?} {}", p.name, c.status, c.message);
+            }
+            for w in &p.health.worktrees {
+                let state = match (&w.error, w.dirty, w.ahead, w.behind) {
+                    (Some(e), ..) => format!("error {e}"),
+                    (None, d, Some(a), Some(b)) => {
+                        format!("dirty {} ahead {a} behind {b}", d.unwrap_or(0))
+                    }
+                    (None, d, ..) => format!("dirty {} no upstream", d.unwrap_or(0)),
+                };
+                println!("{} {}: {state}", p.name, w.path.display());
+            }
         }
     });
-    Ok(ExitCode::SUCCESS)
+    Ok(exit(failed))
 }
 
-fn now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
-}
-
-fn assess_all<'a>(
-    projects: &[&'a Project],
-    cfg: &Config,
-) -> Result<Vec<(&'a Project, Assessment)>> {
-    let now = now();
-    let mut out = Vec::new();
-    for p in projects {
-        for wt in &p.worktrees {
-            out.push((*p, prune::assess(p, wt, cfg, now)?));
-        }
-    }
-    Ok(out)
+fn assess_all<'a>(projects: &[&'a Project], cfg: &Config) -> Vec<(&'a Project, Assessment)> {
+    projects
+        .iter()
+        .flat_map(|p| {
+            prune::assess_project(p, cfg)
+                .into_iter()
+                .map(move |a| (*p, a))
+        })
+        .collect()
 }
 
 #[derive(Serialize)]
@@ -575,19 +544,17 @@ fn print_row(r: &WorktreeRow) {
     );
 }
 
+fn unknown(a: &Assessment) -> bool {
+    matches!(a.verdict, Verdict::Unknown(_))
+}
+
 fn worktrees(json: bool, name: Option<&str>) -> Result<ExitCode> {
-    let paths = Paths::from_env()?;
-    // bad config must not hide the list: drop products, keep going
-    let cfg = Config::load(&paths.config_file).unwrap_or_else(|e| {
-        eprintln!("warn: {e}: products hidden");
-        Config::default()
-    });
-    let projects = refreshed(&paths)?;
+    let Loaded { cfg, projects } = load()?;
     let selected: Vec<&Project> = match name {
-        Some(q) => vec![one(resolve(&projects, q), q)?],
+        Some(q) => vec![target(json, &projects, q)?.project],
         None => projects.iter().collect(),
     };
-    let assessed = assess_all(&selected, &cfg)?;
+    let assessed = assess_all(&selected, &cfg);
     let rows: Vec<WorktreeRow> = assessed
         .iter()
         .map(|(p, a)| WorktreeRow {
@@ -600,29 +567,32 @@ fn worktrees(json: bool, name: Option<&str>) -> Result<ExitCode> {
             print_row(r);
         }
     });
-    Ok(ExitCode::SUCCESS)
+    Ok(exit(assessed.iter().any(|(_, a)| unknown(a))))
+}
+
+#[derive(Serialize)]
+struct PruneRow<'a> {
+    #[serde(flatten)]
+    row: WorktreeRow<'a>,
+    removed: bool,
+    error: Option<String>,
 }
 
 #[derive(Serialize)]
 struct PruneReport<'a> {
     dry_run: bool,
-    pruned: Vec<WorktreeRow<'a>>,
+    pruned: Vec<PruneRow<'a>>,
 }
 
 fn prune_cmd(json: bool, target: Option<&str>, yes: bool, force: bool) -> Result<ExitCode> {
-    let paths = Paths::from_env()?;
-    // bad config must not hide the list: drop products, keep going
-    let cfg = Config::load(&paths.config_file).unwrap_or_else(|e| {
-        eprintln!("warn: {e}: products hidden");
-        Config::default()
-    });
-    let projects = refreshed(&paths)?;
+    let Loaded { cfg, projects } = load()?;
     let all: Vec<&Project> = projects.iter().collect();
-    let assessed = assess_all(&all, &cfg)?;
+    let assessed = assess_all(&all, &cfg);
     let picked: Vec<(&Project, Assessment)> = match target {
+        // Unknown rows are listed so a failed assessment is never silent.
         None => assessed
             .into_iter()
-            .filter(|(_, a)| matches!(a.verdict, Verdict::Prunable(_)))
+            .filter(|(_, a)| matches!(a.verdict, Verdict::Prunable(_) | Verdict::Unknown(_)))
             .collect(),
         Some(t) => {
             let path = fs::canonicalize(t).unwrap_or_else(|_| PathBuf::from(t));
@@ -637,63 +607,72 @@ fn prune_cmd(json: bool, target: Option<&str>, yes: bool, force: bool) -> Result
             let Some((p, a)) = hits.pop() else {
                 return Err(Error::NotFound(t.to_owned()));
             };
-            if let Verdict::Kept(b) = &a.verdict {
-                // A branch name can hit an unexpected Project: force needs the path.
-                let refusal = if !force || matches!(b, Blocker::Main | Blocker::Locked) {
+            // A branch name can hit an unexpected Project: force needs the path.
+            let refusal = match &a.verdict {
+                Verdict::Prunable(_) => None,
+                Verdict::Unknown(why) => Some(format!("cannot assess: {why}")),
+                Verdict::Kept(b) if !force || matches!(b, Blocker::Main | Blocker::Locked) => {
                     Some(format!("blocked by {b:?}"))
-                } else {
-                    (a.path != path).then(|| "--force needs the Worktree path".to_owned())
-                };
-                if let Some(why) = refusal {
-                    let msg = format!("{}: {why}", a.path.display());
-                    return Ok(fail(json, "refused", &msg, &[]));
                 }
+                Verdict::Kept(_) => {
+                    (a.path != path).then(|| "--force needs the Worktree path".to_owned())
+                }
+            };
+            if let Some(why) = refusal {
+                let msg = format!("{}: {why}", a.path.display());
+                return Ok(fail(json, "refused", &msg, &[]));
             }
             vec![(p, a)]
         }
     };
-    if yes {
-        for (p, a) in &picked {
-            prune::remove(p, a, force)?;
-        }
-    }
+    let rows: Vec<PruneRow> = picked
+        .iter()
+        .map(|(p, a)| {
+            let outcome = (yes && !unknown(a)).then(|| prune::remove(p, a, force));
+            PruneRow {
+                row: WorktreeRow {
+                    project: &p.name,
+                    assessment: a,
+                },
+                removed: matches!(outcome, Some(Ok(()))),
+                error: outcome.and_then(Result::err).map(|e| e.to_string()),
+            }
+        })
+        .collect();
+    let failed = rows
+        .iter()
+        .any(|r| r.error.is_some() || unknown(r.row.assessment));
     let report = PruneReport {
         dry_run: !yes,
-        pruned: picked
-            .iter()
-            .map(|(p, a)| WorktreeRow {
-                project: &p.name,
-                assessment: a,
-            })
-            .collect(),
+        pruned: rows,
     };
     emit(json, &report, |r| {
         if r.dry_run {
             println!("dry run: nothing removed (use --yes)");
         }
         for row in &r.pruned {
-            print_row(row);
+            print_row(&row.row);
+            if let Some(e) = &row.error {
+                eprintln!("error: {}: {e}", row.row.assessment.path.display());
+            }
         }
     });
-    Ok(ExitCode::SUCCESS)
+    Ok(exit(failed))
 }
 
 #[cfg(test)]
 mod tests {
-    use picore_core::model::ProjectId;
-
     use super::*;
 
-    fn project(name: &str) -> Project {
-        Project {
-            id: ProjectId(PathBuf::from(format!("/x/{name}/.git"))),
+    fn view(name: &str, product: Option<&str>) -> ProjectView {
+        ProjectView {
+            id: PathBuf::from(format!("/x/{name}")),
             name: name.into(),
-            work_tree: None,
+            product: product.map(str::to_owned),
             branch: None,
             repo: None,
             techs: vec![],
-            worktrees: vec![],
-            stamp: 0,
+            worktrees: 1,
         }
     }
 
@@ -704,16 +683,16 @@ mod tests {
 
     #[test]
     fn groups_products_then_members_then_ungrouped_by_name() {
-        let ps: Vec<Project> = ["zed", "b", "a", "c", "loose"].map(project).into();
+        let names = ["zed", "b", "a", "c", "loose"];
         let products = [Some("shop"), Some("app"), Some("app"), None, None];
-        let listed: Vec<Listed> = ps
-            .iter()
+        let listed: Vec<ProjectView> = names
+            .into_iter()
             .zip(products)
-            .map(|(project, product)| Listed { project, product })
+            .map(|(n, p)| view(n, p))
             .collect();
         let got: Vec<(Option<&str>, Vec<&str>)> = grouped(&listed)
             .into_iter()
-            .map(|(p, m)| (p, m.iter().map(|l| l.project.name.as_str()).collect()))
+            .map(|(p, m)| (p, m.iter().map(|l| l.name.as_str()).collect()))
             .collect();
         assert_eq!(
             got,

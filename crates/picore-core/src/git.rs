@@ -1,4 +1,5 @@
 use std::env;
+use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -13,15 +14,14 @@ pub struct WorktreeEntry {
     pub bare: bool,
     pub detached: bool,
     pub locked: bool,
-    pub prunable: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StatusSummary {
     pub branch: Option<String>,
     pub upstream: Option<String>,
-    pub ahead: u32,
-    pub behind: u32,
+    pub ahead: Option<u32>,
+    pub behind: Option<u32>,
     pub changes: u32,
 }
 
@@ -31,13 +31,28 @@ fn git(cwd: &Path, args: &[&str]) -> Result<String> {
 }
 
 fn git_with(cwd: &Path, config: &[&str], args: &[&str]) -> Result<String> {
+    git_env(cwd, config, &[], args)
+}
+
+type Env = Vec<(String, OsString)>;
+
+fn git_env(
+    cwd: &Path,
+    config: &[&str],
+    env: &[(String, OsString)],
+    args: &[&str],
+) -> Result<String> {
     // No optional locks: status would rewrite a stale index inside the Project.
     let mut full = vec!["--no-optional-locks", "-c", "core.fsmonitor=false"];
     for c in config {
         full.extend(["-c", c]);
     }
     full.extend(args);
-    Ok(process::run("git", cwd, &full, TIMEOUT)?)
+    let env: Vec<(&str, &OsStr)> = env
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_os_str()))
+        .collect();
+    Ok(process::run_env("git", cwd, &full, &env, TIMEOUT)?)
 }
 
 pub fn parse_worktree_list(z: &str) -> Vec<WorktreeEntry> {
@@ -52,7 +67,6 @@ pub fn parse_worktree_list(z: &str) -> Vec<WorktreeEntry> {
                 bare: false,
                 detached: false,
                 locked: false,
-                prunable: false,
             }));
         } else if let Some(w) = cur.as_mut() {
             let (key, val) = field.split_once(' ').unwrap_or((field, ""));
@@ -64,7 +78,6 @@ pub fn parse_worktree_list(z: &str) -> Vec<WorktreeEntry> {
                 "bare" => w.bare = true,
                 "detached" => w.detached = true,
                 "locked" => w.locked = true,
-                "prunable" => w.prunable = true,
                 _ => {}
             }
         }
@@ -85,12 +98,10 @@ pub fn parse_status(z: &str) -> StatusSummary {
             let mut counts = v.split(' ');
             s.ahead = counts
                 .next()
-                .and_then(|a| a.strip_prefix('+')?.parse().ok())
-                .unwrap_or(0);
+                .and_then(|a| a.strip_prefix('+')?.parse().ok());
             s.behind = counts
                 .next()
-                .and_then(|b| b.strip_prefix('-')?.parse().ok())
-                .unwrap_or(0);
+                .and_then(|b| b.strip_prefix('-')?.parse().ok());
         } else {
             match field.split_once(' ') {
                 Some(("1" | "u" | "?", _)) => s.changes += 1,
@@ -114,25 +125,27 @@ pub fn worktrees(repo: &Path) -> Result<Vec<WorktreeEntry>> {
 }
 
 pub fn status(work_tree: &Path) -> Result<StatusSummary> {
-    let filters = filter_blanks(work_tree)?;
-    let config: Vec<&str> = filters.iter().map(String::as_str).collect();
-    Ok(parse_status(&git_with(
+    Ok(parse_status(&git_env(
         work_tree,
-        &config,
-        // filter_blanks cannot reach submodule configs: do not enter them.
+        &[],
+        &driver_blanks(work_tree)?,
+        // driver_blanks cannot reach submodule configs: do not enter them.
         &[
             "status",
             "--porcelain=v2",
             "--branch",
             "-z",
+            "--untracked-files=all",
             "--ignore-submodules=all",
         ],
     )?))
 }
 
-// Re-hashing a stale index entry runs repo-chosen filter drivers: blank them.
-// --local skips include.path, so read all scopes and keep the repo ones.
-fn filter_blanks(work_tree: &Path) -> Result<Vec<String>> {
+// Re-hashing a stale index entry runs repo-chosen filter drivers: blank repo ones.
+// merge-tree runs merge drivers: a user one could fake a merged tree, so set every
+// one to `false`, read as a conflict. Env, not -c: a '=' in the name breaks -c.
+fn driver_blanks(work_tree: &Path) -> Result<Env> {
+    // --local skips include.path, so read all scopes and filter.
     let out = match git(
         work_tree,
         &[
@@ -142,21 +155,33 @@ fn filter_blanks(work_tree: &Path) -> Result<Vec<String>> {
             "--null",
             "--name-only",
             "--get-regexp",
-            r"^filter\.",
+            r"^filter\.|^merge\..+\.driver$",
         ],
     ) {
         Ok(out) => out,
-        Err(Error::Proc(ProcError::Failed { .. })) => return Ok(Vec::new()),
+        // Exit 1 = no match; any other failure must not run without blanks.
+        Err(Error::Proc(ProcError::Failed { code: Some(1), .. })) => return Ok(Vec::new()),
         Err(e) => return Err(e),
     };
     let fields: Vec<&str> = out.split('\0').collect();
-    Ok(fields
+    let blanks: Vec<(&str, &str)> = fields
         .as_chunks::<2>()
         .0
         .iter()
-        .filter(|[scope, _]| matches!(*scope, "local" | "worktree"))
-        .map(|[_, key]| format!("{key}="))
-        .collect())
+        .filter_map(|[scope, key]| {
+            if key.starts_with("merge.") {
+                Some((*key, "false"))
+            } else {
+                matches!(*scope, "local" | "worktree").then_some((*key, ""))
+            }
+        })
+        .collect();
+    let mut env: Env = vec![("GIT_CONFIG_COUNT".into(), blanks.len().to_string().into())];
+    for (n, (key, value)) in blanks.into_iter().enumerate() {
+        env.push((format!("GIT_CONFIG_KEY_{n}"), key.into()));
+        env.push((format!("GIT_CONFIG_VALUE_{n}"), value.into()));
+    }
+    Ok(env)
 }
 
 /// `owner/name` from an origin URL (https, ssh://, scp-like); any host.
@@ -253,20 +278,23 @@ pub fn is_env_file(path: &Path) -> bool {
 }
 
 pub fn default_branch(repo: &Path) -> Result<Option<String>> {
-    if let Ok(origin) = git(
+    let origin = git(
         repo,
         &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-    ) {
-        let origin = origin.trim_end_matches('\n');
-        let name = origin.strip_prefix("origin/").unwrap_or(origin);
-        if verifies(repo, &format!("refs/heads/{name}"))? {
-            return Ok(Some(name.to_owned()));
-        }
-        if verifies(repo, &format!("refs/remotes/origin/{name}"))? {
-            return Ok(Some(format!("origin/{name}")));
+    )
+    .ok();
+    let origin = origin.as_deref().map(|o| {
+        let o = o.trim_end_matches('\n');
+        o.strip_prefix("origin/").unwrap_or(o)
+    });
+    let names = || origin.into_iter().chain(["main", "master"]);
+    // Remote first: a local default branch lags until pulled.
+    for name in names() {
+        if let Some(remote) = remote_branch(repo, name)? {
+            return Ok(Some(remote));
         }
     }
-    for name in ["main", "master"] {
+    for name in names() {
         if verifies(repo, &format!("refs/heads/{name}"))? {
             return Ok(Some(name.to_owned()));
         }
@@ -274,17 +302,64 @@ pub fn default_branch(repo: &Path) -> Result<Option<String>> {
     Ok(None)
 }
 
-pub fn is_strict_ancestor(repo: &Path, tip: &str, of: &str) -> Result<bool> {
-    match git(
-        repo,
-        &["merge-base", "--is-ancestor", "--end-of-options", tip, of],
-    ) {
-        Ok(_) => {}
-        Err(Error::Proc(ProcError::Failed { code: Some(1), .. })) => return Ok(false),
-        Err(e) => return Err(e),
+pub fn remote_branch(repo: &Path, name: &str) -> Result<Option<String>> {
+    Ok(verifies(repo, &format!("refs/remotes/origin/{name}"))?.then(|| format!("origin/{name}")))
+}
+
+// Merged = merging tip into `into` leaves into's tree unchanged: covers squash merges.
+pub fn is_merged(repo: &Path, tip: &str, into: &str) -> Result<bool> {
+    let rev = |r: &str| {
+        git(repo, &["rev-parse", "--verify", "--end-of-options", r])
+            .map(|o| o.trim_end_matches('\n').to_owned())
+    };
+    let (tip, into) = (rev(tip)?, rev(into)?);
+    // Same tip: fresh branch, nothing landed yet.
+    if tip == into {
+        return Ok(false);
     }
-    let rev = |r| git(repo, &["rev-parse", "--end-of-options", r]);
-    Ok(rev(tip)? != rev(of)?)
+    let tree = rev(&format!("{into}^{{tree}}"))?;
+    // merge-tree writes objects: send them to a scratch dir, never into the Project.
+    let scratch = tempfile::tempdir()?;
+    let objects = git(
+        repo,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "objects",
+        ],
+    )?;
+    // Alternates are ':'-separated; a double-quoted entry is C-unquoted by git.
+    let objects = objects.trim_end_matches('\n');
+    let quoted = format!("\"{}\"", objects.replace('\\', "\\\\").replace('"', "\\\""));
+    let mut env = driver_blanks(repo)?;
+    env.push(("GIT_OBJECT_DIRECTORY".into(), scratch.path().into()));
+    env.push(("GIT_ALTERNATE_OBJECT_DIRECTORIES".into(), quoted.into()));
+    let args = [
+        "merge-tree",
+        "--write-tree",
+        "--allow-unrelated-histories",
+        &into,
+        &tip,
+    ];
+    match git_env(repo, &[], &env, &args) {
+        Ok(out) => Ok(out.lines().next() == Some(tree.as_str())),
+        Err(Error::Proc(ProcError::Failed { code: Some(1), .. })) => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+/// Seconds since epoch when the linked Worktree was added.
+pub fn created_at(work_tree: &Path) -> Result<i64> {
+    let dir = git(work_tree, &["rev-parse", "--absolute-git-dir"])?;
+    // commondir is written once by `worktree add`, never rewritten.
+    let added =
+        std::fs::metadata(Path::new(dir.trim_end_matches('\n')).join("commondir"))?.modified()?;
+    let secs = added
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(io::Error::other)?
+        .as_secs();
+    Ok(i64::try_from(secs).map_err(io::Error::other)?)
 }
 
 pub fn ls_remote(work_tree: &Path) -> Result<()> {
@@ -317,9 +392,8 @@ pub fn ls_remote(work_tree: &Path) -> Result<()> {
 }
 
 pub fn remove_worktree(repo: &Path, path: &Path, force: bool) -> Result<()> {
-    // worktree remove runs status inside the worktree: blank its filters too.
-    let filters = filter_blanks(path)?;
-    let config: Vec<&str> = filters.iter().map(String::as_str).collect();
+    // worktree remove runs status inside the worktree: blank its drivers too.
+    let blanks = driver_blanks(path)?;
     let path = path
         .to_str()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "non-UTF-8 worktree path"))?;
@@ -328,7 +402,9 @@ pub fn remove_worktree(repo: &Path, path: &Path, force: bool) -> Result<()> {
     } else {
         vec!["worktree", "remove", path]
     };
-    git_with(repo, &config, &args).map(|_| ())
+    // git's own clean check must see untracked files a user config hides.
+    let config = ["status.showUntrackedFiles=all"];
+    git_env(repo, &config, &blanks, &args).map(|_| ())
 }
 
 pub fn prune_worktrees(repo: &Path) -> Result<()> {

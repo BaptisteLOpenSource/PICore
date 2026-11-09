@@ -1,17 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { groupByProduct } from "./store";
-import type { Listed } from "./types";
+import { groupByProduct, needsAttention, totals } from "./store";
+import type { Listed, WorktreeHealth } from "./types";
 
 const project = (name: string, product: string | null): Listed => ({
   id: `/src/${name}`,
   name,
-  work_tree: null,
-  branch: "main",
-  techs: [],
-  worktrees: [],
-  stamp: 0,
   product,
-  health: null,
+  branch: "main",
+  repo: null,
+  techs: [],
+  worktrees: 1,
+  health: { worktrees: [], remote: null },
 });
 
 describe("groupByProduct", () => {
@@ -41,5 +40,36 @@ describe("groupByProduct", () => {
   it("omits the no-product group when empty", () => {
     const groups = groupByProduct([project("app", "prod")], { prod: "/p/prod" });
     expect(groups.map((g) => g.product)).toEqual(["prod"]);
+  });
+});
+
+const row = (dirty: number, ahead: number | null, behind: number | null): WorktreeHealth => ({
+  path: "/w",
+  branch: "main",
+  dirty,
+  ahead,
+  behind,
+  upstream: ahead === null ? null : "origin/main",
+  error: null,
+});
+
+describe("totals", () => {
+  it("sums every worktree so a dirty linked one counts", () => {
+    const h = { worktrees: [row(0, 0, 0), row(2, null, null)], remote: null };
+    expect(totals(h)).toEqual({ dirty: 2, ahead: 0, behind: 0 });
+    expect(needsAttention(h)).toBe(true);
+  });
+
+  it("keeps no upstream as null, not zero", () => {
+    const h = { worktrees: [row(0, null, null)], remote: null };
+    expect(totals(h)).toEqual({ dirty: 0, ahead: null, behind: null });
+    expect(needsAttention(h)).toBe(false);
+  });
+
+  it("counts a worktree error as needing attention, not as dirty", () => {
+    const broken = { ...row(0, null, null), dirty: null, error: "directory missing" };
+    const h = { worktrees: [row(0, null, null), broken], remote: null };
+    expect(totals(h).dirty).toBe(0);
+    expect(needsAttention(h)).toBe(true);
   });
 });

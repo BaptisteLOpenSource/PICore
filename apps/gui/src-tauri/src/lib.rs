@@ -7,18 +7,19 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use picore_core::config::{Config, Paths};
 use picore_core::context::{self, ProjectContext};
 use picore_core::health::{self, Check, ProjectHealth};
-use picore_core::model::{Project, ProjectId, project_dir};
+use picore_core::prune::{self, Assessment};
 use picore_core::refresh;
+use picore_core::resolve::resolve;
 use picore_core::store::Index;
+use picore_core::view::{self, ProjectView};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 #[derive(Serialize)]
 pub struct Listed {
     #[serde(flatten)]
-    pub project: Project,
-    pub product: Option<String>,
-    pub health: Option<ProjectHealth>,
+    pub view: ProjectView,
+    pub health: ProjectHealth,
 }
 
 #[derive(Serialize)]
@@ -33,6 +34,7 @@ pub struct Overview {
 pub struct Detail {
     pub context: ProjectContext,
     pub health: ProjectHealth,
+    pub prune: Vec<Assessment>,
 }
 
 fn err(e: impl std::fmt::Display) -> String {
@@ -40,14 +42,12 @@ fn err(e: impl std::fmt::Display) -> String {
 }
 
 pub fn overview(paths: &Paths, discover: bool) -> Result<Overview, String> {
-    let mut warnings = Vec::new();
-    let (cfg, loaded) = match Config::load(&paths.config_file) {
-        Ok(cfg) => (cfg, true),
-        Err(e) => {
-            warnings.push(format!("{e}: products hidden"));
-            (Config::default(), false)
-        }
-    };
+    let (cfg, bad) = Config::load_or_default(&paths.config_file);
+    let loaded = bad.is_none();
+    let mut warnings: Vec<String> = bad
+        .map(|e| format!("{e}: products hidden"))
+        .into_iter()
+        .collect();
     let index = Index::open(&paths.index_file).map_err(err)?;
     if discover && loaded {
         match refresh::index_all(&index, &cfg) {
@@ -60,7 +60,7 @@ pub fn overview(paths: &Paths, discover: bool) -> Result<Overview, String> {
             Err(e) => warnings.push(format!("discovery: {e}")),
         }
     }
-    let (projects, failed) = refresh::refresh_all(&index).map_err(err)?;
+    let (projects, failed) = refresh::refresh_all(&index, &cfg).map_err(err)?;
     warnings.extend(
         failed
             .iter()
@@ -70,15 +70,11 @@ pub fn overview(paths: &Paths, discover: bool) -> Result<Overview, String> {
         warnings.push("no projects indexed: add a scan root".into());
     }
     let projects = projects
-        .into_iter()
-        .map(|project| {
-            let product = cfg.product_of(project_dir(&project.id)).map(str::to_owned);
-            let health = health::project_health(&project, false).ok();
-            Listed {
-                project,
-                product,
-                health,
-            }
+        .iter()
+        .zip(view::list(&projects, &cfg))
+        .map(|(p, view)| Listed {
+            view,
+            health: health::project_health(p, false),
         })
         .collect();
     let products = cfg
@@ -94,15 +90,21 @@ pub fn overview(paths: &Paths, discover: bool) -> Result<Overview, String> {
     })
 }
 
+/// `id` = `ProjectView::id`, resolved like everywhere else.
 pub fn detail(paths: &Paths, id: PathBuf) -> Result<Detail, String> {
-    let index = Index::open(&paths.index_file).map_err(err)?;
-    let project = index
-        .get(&ProjectId(id))
+    let all = Index::open(&paths.index_file)
+        .and_then(|i| i.all())
+        .map_err(err)?;
+    let query = id.to_string_lossy();
+    let project = resolve(&all, &query)
+        .into_target(&query)
         .map_err(err)?
-        .ok_or("unknown project")?;
+        .project;
+    let (cfg, _) = Config::load_or_default(&paths.config_file);
     Ok(Detail {
-        context: context::context(&project).map_err(err)?,
-        health: health::project_health(&project, false).map_err(err)?,
+        context: context::context(project, &view::of(project, &all, &cfg)).map_err(err)?,
+        health: health::project_health(project, false),
+        prune: prune::assess_project(project, &cfg),
     })
 }
 
@@ -174,13 +176,23 @@ mod commands {
 }
 
 fn watch_config(app: &AppHandle, config_file: &Path) -> Result<RecommendedWatcher, String> {
+    let handle = app.clone();
+    watch(config_file, move || {
+        let _ = handle.emit("config-changed", ());
+    })
+}
+
+fn watch(
+    config_file: &Path,
+    on_change: impl Fn() + Send + 'static,
+) -> Result<RecommendedWatcher, String> {
     let dir = config_file.parent().ok_or("config path has no parent")?;
     fs::create_dir_all(dir).map_err(err)?;
     let target = config_file.to_path_buf();
-    let handle = app.clone();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        if matches!(event, Ok(e) if e.paths.contains(&target)) {
-            let _ = handle.emit("config-changed", ());
+        // inotify reports opens too: our own config reads would loop refresh.
+        if matches!(event, Ok(e) if !e.kind.is_access() && e.paths.contains(&target)) {
+            on_change();
         }
     })
     .map_err(err)?;
@@ -196,6 +208,7 @@ pub fn run() {
     let watched = paths.clone();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(paths)
         .setup(move |app| {
             match watch_config(app.handle(), &watched.config_file) {
@@ -220,12 +233,16 @@ pub fn run() {
 }
 
 #[cfg(test)]
+#[allow(dead_code)] // shared helpers, not all used here
+#[path = "../../../../crates/picore-core/tests/support/mod.rs"]
+mod support;
+
+#[cfg(test)]
 mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
     use picore_core::config::{Config, Paths};
-    use picore_core::model::ProjectId;
     use picore_core::process::TIMEOUT;
 
     use super::*;
@@ -251,7 +268,7 @@ mod tests {
     }
 
     fn find<'a>(ov: &'a Overview, name: &str) -> &'a Listed {
-        ov.projects.iter().find(|l| l.project.name == name).unwrap()
+        ov.projects.iter().find(|l| l.view.name == name).unwrap()
     }
 
     #[test]
@@ -260,8 +277,8 @@ mod tests {
         add_product(&paths, "prod", &src.join("prod")).unwrap();
         let ov = overview(&paths, true).unwrap();
         assert_eq!(ov.projects.len(), 2);
-        assert_eq!(find(&ov, "app").product.as_deref(), Some("prod"));
-        assert_eq!(find(&ov, "solo").product, None);
+        assert_eq!(find(&ov, "app").view.product.as_deref(), Some("prod"));
+        assert_eq!(find(&ov, "solo").view.product, None);
         assert!(ov.products.contains_key("prod"));
     }
 
@@ -323,7 +340,10 @@ mod tests {
         add_product(&paths, "prod", &src.join("prod")).unwrap();
         overview(&paths, true).unwrap();
         remove_product(&paths, "prod").unwrap();
-        assert_eq!(find(&overview(&paths, false).unwrap(), "app").product, None);
+        assert_eq!(
+            find(&overview(&paths, false).unwrap(), "app").view.product,
+            None
+        );
         let err = remove_product(&paths, "prod").unwrap_err();
         assert_eq!(err, "unknown product prod");
     }
@@ -340,11 +360,67 @@ mod tests {
     }
 
     #[test]
+    fn config_watch_ignores_reads_and_sees_writes() {
+        let (_tmp, paths, src) = setup();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _w = watch(&paths.config_file, move || tx.send(()).unwrap()).unwrap();
+        let quiet = std::time::Duration::from_millis(300);
+        overview(&paths, false).unwrap();
+        assert!(
+            rx.recv_timeout(quiet).is_err(),
+            "a config read fired a change"
+        );
+        add_product(&paths, "prod", &src.join("prod")).unwrap();
+        assert!(
+            rx.recv_timeout(quiet).is_ok(),
+            "a config write fired nothing"
+        );
+    }
+
+    #[test]
     fn detail_returns_context_of_listed_project() {
         let (_tmp, paths, _src) = setup();
         let ov = overview(&paths, true).unwrap();
-        let ProjectId(id) = find(&ov, "app").project.id.clone();
+        let id = find(&ov, "app").view.id.clone();
+        assert!(!id.ends_with(".git"));
         let d = detail(&paths, id).unwrap();
         assert_eq!(d.context.name, "app");
+        assert_eq!(d.health.worktrees.len(), 1);
+        assert_eq!(d.prune.len(), 1);
+    }
+
+    #[test]
+    fn detail_flags_a_missing_worktree_prunable() {
+        let (tmp, paths, src) = setup();
+        let app = src.join("prod/app");
+        let wt = tmp.path().join("app-wt");
+        crate::support::commit_in(&app, "init", None);
+        let add = [
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "74-gone",
+            wt.to_str().unwrap(),
+        ];
+        picore_core::process::run("git", &app, &add, TIMEOUT).unwrap();
+        fs::remove_dir_all(&wt).unwrap();
+        let ov = overview(&paths, true).unwrap();
+        let d = detail(&paths, find(&ov, "app").view.id.clone()).unwrap();
+        let gone = d
+            .prune
+            .iter()
+            .find(|a| a.branch.as_deref() == Some("74-gone"))
+            .unwrap();
+        assert_eq!(
+            gone.verdict,
+            prune::Verdict::Prunable(prune::Reason::Missing)
+        );
+        let listed = d
+            .context
+            .worktrees
+            .iter()
+            .find(|w| w.branch.as_deref() == Some("74-gone"));
+        assert_eq!(listed.unwrap().issue, Some(74));
     }
 }

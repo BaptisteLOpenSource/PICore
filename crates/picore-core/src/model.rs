@@ -39,7 +39,8 @@ pub struct Worktree {
     pub issue: Option<u32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+// Not Serialize: outputs go through `view::ProjectView`, `stamp` stays internal.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Project {
     pub id: ProjectId,
     pub name: String,
@@ -52,6 +53,11 @@ pub struct Project {
 }
 
 impl Project {
+    /// What users and agents call the Project: its work tree, else its git dir.
+    pub fn path(&self) -> &Path {
+        self.work_tree.as_deref().unwrap_or(&self.id.0)
+    }
+
     pub fn linked_worktrees(&self) -> impl Iterator<Item = &Worktree> {
         self.worktrees.iter().filter(|w| !w.is_main)
     }

@@ -17,7 +17,19 @@ export function groupByProduct(projects: Listed[], products: Record<string, stri
   return [...groups.values()].filter((g) => g.product !== null || g.projects.length > 0);
 }
 
-export const needsAttention = (h: ProjectHealth | null) => !!h && h.dirty + h.ahead + h.behind > 0;
+export type Totals = { dirty: number; ahead: number | null; behind: number | null };
+
+// null = no worktree has an upstream, so "in sync" and "untracked" stay distinct.
+export function totals(h: ProjectHealth): Totals {
+  const sum = (k: "ahead" | "behind") =>
+    h.worktrees.reduce<number | null>((acc, w) => (w[k] === null ? acc : (acc ?? 0) + w[k]), null);
+  return { dirty: h.worktrees.reduce((n, w) => n + (w.dirty ?? 0), 0), ahead: sum("ahead"), behind: sum("behind") };
+}
+
+export const needsAttention = (h: ProjectHealth) => {
+  const t = totals(h);
+  return t.dirty + (t.ahead ?? 0) + (t.behind ?? 0) > 0 || h.worktrees.some((w) => w.error !== null);
+};
 
 const EMPTY: Overview = { projects: [], products: {}, roots: [], warnings: [] };
 
@@ -26,6 +38,9 @@ export const [machine, setMachine] = createSignal<Check[]>([]);
 export const [selectedId, setSelectedId] = createSignal<string | null>(null);
 export const [error, setError] = createSignal<string | null>(null);
 export const [refreshing, setRefreshing] = createSignal(false);
+export const [checking, setChecking] = createSignal(false);
+// null until known: paths then show in full.
+export const [home, setHome] = createSignal<string | null>(null);
 
 // Below lg one pane shows at a time, so the open project's name is the h1.
 export const [isWide, setWide] = createSignal(true);
@@ -84,6 +99,26 @@ export const addRoot = (path: string) => mutate(() => api.addRoot(path), true);
 
 export const deleteRoot = (path: string) => mutate(() => api.removeRoot(path), true);
 
+export async function checkMachine() {
+  setChecking(true);
+  try {
+    setMachine(await api.machine());
+  } catch (e) {
+    setError(String(e));
+  } finally {
+    setChecking(false);
+  }
+}
+
+export const copyText = (text: string) =>
+  api.copy(text).then(
+    () => true,
+    (e) => {
+      setError(String(e));
+      return false;
+    },
+  );
+
 export async function chooseFolder(): Promise<string | null> {
   try {
     return await api.pickFolder();
@@ -98,7 +133,8 @@ export function start() {
   setWide(wide.matches);
   wide.addEventListener("change", (e) => setWide(e.matches));
   void refresh(false);
-  api.machine().then(setMachine, (e) => setError(String(e)));
+  void checkMachine();
+  api.home().then(setHome, () => setHome(null));
   window.addEventListener("focus", () => void refresh(false));
   void api.onConfigChanged(() => void refresh(false));
 }

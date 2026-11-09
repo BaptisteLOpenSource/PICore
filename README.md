@@ -64,7 +64,7 @@ PICore has no telemetry. It sends nothing to its authors.
 
 ## Install
 
-Requires a Rust toolchain (pinned in `rust-toolchain.toml`), `git`, and optionally `gh`.
+Requires a Rust toolchain (pinned in `rust-toolchain.toml`), `git` >= 2.38, and optionally `gh`.
 From a clone of this repository:
 
 ```sh
@@ -90,7 +90,7 @@ path (`<project>.worktrees/<issue>-<slug>`) from the issue title, fetched with `
 Project. It creates nothing; the project defaults to the current directory.
 
 Config and Index live in XDG paths: `~/.config/picore/config.toml` and
-`~/.local/share/picore/picore.db`. Set `PICORE_CONFIG_DIR` and `PICORE_DATA_DIR` to override.
+`~/.local/share/picore/picore-v<schema>.db` (one file per schema version). Set `PICORE_CONFIG_DIR` and `PICORE_DATA_DIR` to override.
 
 ## Usage
 
@@ -115,7 +115,8 @@ picore info PICore
 picore status
 # git: Ok git version 2.56.0
 # ssh-agent: Ok agent has keys
-# PICore: dirty 0 ahead 0 behind 0
+# PICore ~/Documents/Git/Config/PICore: dirty 0 ahead 0 behind 0
+# PICore ~/Documents/Git/Config/PICore.worktrees/76-health: dirty 2 no upstream
 picore worktrees PICore
 # PICore  ~/Documents/Git/Config/PICore  Kept(Main)
 # PICore  ~/Documents/Git/Config/PICore.worktrees/10-name-resolution  Kept(NotMerged)
@@ -127,11 +128,18 @@ picore prune
 Commands that take a Project name also accept `name@<issue>` (the Worktree on branch
 `<issue>-...`) and a path (`/`, `~`, `.`) inside a Project or Worktree. `picore open api@80` opens that Worktree.
 
+Every command refreshes the Index first and re-runs discovery, so a repository cloned under a
+Scan Root shows up without `picore index`. `picore index` is still what drops Projects whose
+Scan Root was removed.
+
 `picore gui` launches the `picore-gui` binary from the GUI bundle, detached, and returns at once.
 
-`picore prune --yes` removes only Prunable Worktrees. A kept Worktree (unmerged, local changes) is
-removed only when you name it by path and pass `--force`. Main and locked Worktrees are
-never removed.
+`picore prune --yes` removes only Prunable Worktrees: clean, and whose branch content is already in
+`origin/<default>` or `origin/dev` (merged or squash-merged; fetch first). Ignored files block unless
+they sit under a rebuildable dir (`node_modules`, `target`, `build`, `dist`, `.next`...); `.env*`
+always blocks. A Fresh Worktree (no commit since it was added) is kept. A kept Worktree (unmerged,
+local changes) is removed only when you name it by path and pass `--force`. Main and locked
+Worktrees are never removed.
 
 Scanning runs git inside your repositories. PICore neutralizes fsmonitor, a repo-local `core.sshCommand` and the
 `ext` protocol, but a `filter.*.clean` driver declared through `.gitattributes` and your git config
@@ -144,12 +152,34 @@ Stable from `v0.1.0`: a change to a code below is a breaking change.
 | Code | Meaning | Example |
 |---|---|---|
 | `0` | Success | `picore list` |
-| `1` | Error: git failure, no scan root, refused action, editor failed | `picore index` with no root |
+| `1` | Error: git failure, no scan root, refused action, editor failed, or any failed row in `status`, `worktrees`, `prune` (the full report is still printed) | `picore status` with a deleted Worktree dir |
 | `2` | Usage error | `picore --bogus` |
 | `3` | Ambiguous name, candidates listed | `picore open api` with two `api` Projects |
 | `4` | Not found | `picore open zzz-none` |
 
 `--json` prints the same error as `{"schema":1,"error":{"code","message","candidates"}}` on stdout.
+`code` is one of `git`, `gh`, `config`, `not_found`, `ambiguous`, `io`, `no_roots`, `refused`.
+
+## JSON output
+
+Success is `{"schema":1,"data":...}`. `null` always means unknown, never zero or false.
+
+- `list`: `[{"id","name","product","branch","repo","techs","worktrees"}]`. `id` is the Project path
+  (work tree, else git dir) and is accepted back by every command and MCP tool. `name` is
+  `<parent>/<name>` when two Projects share a name. `worktrees` counts all Worktrees, main included.
+  MCP `list_projects` and the GUI use this same shape.
+- `status`: `{"machine":[Check],"projects":[{"name","path","worktrees":[Row],"remote":Check|null}]}`.
+  A Row is `{"path","branch","dirty","ahead","behind","upstream","error"}`: `ahead`/`behind` are
+  `null` without an upstream; when git fails or the directory is gone, `error` says why and the
+  counts are `null`.
+- `worktrees`: `[{"project","path","branch","verdict","reason","stale"}]`. `prune` wraps the same rows,
+  plus `"removed"` and `"error"`, in `{"dry_run","pruned":[...]}`.
+
+| `verdict` | `reason` |
+|---|---|
+| `prunable` | `missing`, `merged` |
+| `kept` | `main`, `detached`, `locked`, `changes`, `env_file`, `ignored_files`, `not_merged`, `fresh`, `no_default_branch` |
+| `unknown` | the git error; never removed, exit code `1` |
 
 ## MCP
 
@@ -173,7 +203,9 @@ Tools: `list_projects`, `find_project`, `get_project_context`, `get_project_sect
 `name@<issue>` (the Worktree on branch `<issue>-...`) or a path inside a Project or Worktree.
 Project context is read from `README.md`, `CLAUDE.md` and `AGENTS.md` only.
 `get_project_context`, `get_project_section`, `list_worktrees` and `get_health` take the `id` returned
-by `list_projects` or `find_project`.
+by `list_projects` or `find_project`. Tool results use the JSON shapes above. A failed call returns
+`{"code","message","candidates"}` with the CLI codes. The config is re-read on every call: a broken
+`config.toml` hides products but never stops the server.
 
 ## Documentation
 

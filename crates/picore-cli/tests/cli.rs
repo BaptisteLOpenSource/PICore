@@ -1,3 +1,7 @@
+#[allow(dead_code)] // shared helpers, not all used here
+#[path = "../../picore-core/tests/support/mod.rs"]
+mod support;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -61,6 +65,26 @@ fn json_envelope_on_list() {
     let v = json(&sb.picore(&["list", "--json"]));
     assert_eq!(v["schema"], 1);
     assert_eq!(v["data"][0]["name"], "a");
+}
+
+#[test]
+fn index_never_touches_another_schema_version_file() {
+    let sb = Sandbox::new();
+    sb.repo("code/a");
+    let data = sb.path().join("data");
+    fs::create_dir_all(&data).unwrap();
+    // Stand-in for a v2 index another installed picore still uses.
+    let old = data.join("picore.db");
+    fs::write(&old, "v2 index").unwrap();
+    assert!(
+        sb.picore(&["root", "add", s(&sb.path().join("code"))])
+            .status
+            .success()
+    );
+    assert!(sb.picore(&["index"]).status.success());
+    assert_eq!(fs::read_to_string(&old).unwrap(), "v2 index");
+    let current = format!("picore-v{}.db", picore_core::store::VERSION);
+    assert!(data.join(current).is_file());
 }
 
 #[test]
@@ -139,34 +163,9 @@ fn git(dir: &Path, args: &[&str]) -> String {
     process::run("git", dir, args, TIMEOUT).unwrap()
 }
 
-// Plumbing only: `git commit` would run the global hooks, which reject commits on main.
 fn commit(repo: &Path, msg: &str) {
     fs::write(repo.join("f.txt"), msg).unwrap();
-    git(repo, &["add", "-A"]);
-    let tree = git(repo, &["write-tree"]);
-    let parent = process::run(
-        "git",
-        repo,
-        &["rev-parse", "--verify", "-q", "HEAD"],
-        TIMEOUT,
-    )
-    .ok()
-    .map(|p| p.trim().to_owned());
-    let mut args = vec![
-        "-c",
-        "user.name=PICore Test",
-        "-c",
-        "user.email=test@picore.invalid",
-        "commit-tree",
-        tree.trim(),
-        "-m",
-        msg,
-    ];
-    if let Some(p) = parent.as_deref() {
-        args.extend(["-p", p]);
-    }
-    let sha = git(repo, &args).trim().to_owned();
-    git(repo, &["update-ref", "HEAD", &sha]);
+    support::commit_in(repo, msg, None);
 }
 
 // `merged` is an ancestor of main (prunable), `dirty` has an untracked file (kept).
@@ -184,6 +183,9 @@ fn merged_and_dirty(sb: &Sandbox) -> (PathBuf, PathBuf) {
         &["worktree", "add", "-q", "-b", "dirty", s(&dirty), "main"],
     );
     fs::write(dirty.join("wip.txt"), "x").unwrap();
+    // Own commit after creation, else the Worktree reads Fresh.
+    commit(&merged, "merged work");
+    git(&repo, &["merge", "-q", "--ff-only", "merged"]);
     commit(&repo, "two");
     (merged, dirty)
 }
@@ -314,15 +316,28 @@ fn prune_dry_run_shows_reason() {
     let out = sb.picore(&["--json", "prune"]);
     let rows = json(&out)["data"]["pruned"].clone();
     let verdict = |path: &Path| {
-        rows.as_array()
+        let r = rows
+            .as_array()
             .unwrap()
             .iter()
             .find(|r| r["path"] == s(path))
-            .unwrap()["verdict"]
-            .clone()
+            .unwrap()
+            .clone();
+        (
+            r["verdict"].clone(),
+            r["reason"].clone(),
+            r["removed"].clone(),
+        )
     };
-    assert_eq!(verdict(&gone), serde_json::json!({"Prunable": "Missing"}));
-    assert_eq!(verdict(&merged), serde_json::json!({"Prunable": "Merged"}));
+    let row = |v: &str, r: &str| {
+        (
+            serde_json::json!(v),
+            serde_json::json!(r),
+            serde_json::json!(false),
+        )
+    };
+    assert_eq!(verdict(&gone), row("prunable", "missing"));
+    assert_eq!(verdict(&merged), row("prunable", "merged"));
 }
 
 #[test]
@@ -377,6 +392,34 @@ fn status_json_has_machine_checks() {
         .map(|c| c["name"].as_str().unwrap())
         .collect();
     assert_eq!(names, ["git", "ssh-agent", "gh"]);
+}
+
+#[test]
+fn status_by_worktree_subdir_reports_each_worktree_and_remote() {
+    let sb = Sandbox::new();
+    let a = sb.repo("code/a");
+    support::commit_in(&a, "i", None);
+    let git = |args: &[&str]| process::run("git", &a, args, TIMEOUT).unwrap();
+    git(&["remote", "add", "origin", "/picore-no-such/x.git"]);
+    let wt = sb.path().join("wt");
+    git(&["worktree", "add", "-q", "-b", "feat", s(&wt)]);
+    fs::create_dir(wt.join("sub")).unwrap();
+    fs::write(wt.join("agent.txt"), "x").unwrap();
+    add_code_root(&sb);
+
+    let out = sb.picore(&["status", "--remote", s(&wt.join("sub"))]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    let wt = fs::canonicalize(&wt).unwrap();
+    assert!(text.contains("a: remote Unknown"), "{text}");
+    assert!(
+        text.contains(&format!("a {}: dirty 1 no upstream", wt.display())),
+        "{text}"
+    );
 }
 
 #[test]
@@ -527,4 +570,131 @@ fn info_without_origin_reports_no_github() {
     assert!(d["github_error"].is_string());
     assert!(d["tags"].as_array().unwrap().is_empty());
     assert!(sb.picore(&["info", "a"]).status.success());
+}
+
+#[test]
+fn list_json_is_the_shared_view() {
+    let sb = Sandbox::new();
+    sb.repo("code/a");
+    add_code_root(&sb);
+    let v = json(&sb.picore(&["list", "--json"]));
+    let row = v["data"][0].as_object().unwrap();
+    let mut keys: Vec<&str> = row.keys().map(String::as_str).collect();
+    keys.sort();
+    assert_eq!(
+        keys,
+        [
+            "branch",
+            "id",
+            "name",
+            "product",
+            "repo",
+            "techs",
+            "worktrees"
+        ]
+    );
+    assert_eq!(row["worktrees"], 1);
+}
+
+#[test]
+fn list_sees_new_repo_without_index() {
+    let sb = Sandbox::new();
+    sb.repo("code/a");
+    add_code_root(&sb);
+    sb.repo("code/b");
+    let v = json(&sb.picore(&["list", "--json"]));
+    assert_eq!(v["data"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn status_reports_missing_worktree_row_and_fails() {
+    let sb = Sandbox::new();
+    let (merged, _dirty) = merged_and_dirty(&sb);
+    add_code_root(&sb);
+    fs::remove_dir_all(&merged).unwrap();
+    let out = sb.picore(&["--json", "status", "a"]);
+    assert_eq!(out.status.code(), Some(1));
+    let v = json(&out);
+    let rows = v["data"]["projects"][0]["worktrees"].as_array().unwrap();
+    assert_eq!(rows.len(), 3);
+    let gone = rows.iter().find(|r| r["path"] == s(&merged)).unwrap();
+    assert!(
+        gone["dirty"].is_null() && gone["error"].is_string(),
+        "{gone}"
+    );
+    assert!(rows.iter().filter(|r| r["error"].is_null()).count() == 2);
+}
+
+#[test]
+fn worktrees_accepts_path_like_status() {
+    let sb = Sandbox::new();
+    let (merged, _dirty) = merged_and_dirty(&sb);
+    add_code_root(&sb);
+    let out = sb.picore(&["--json", "worktrees", s(&merged)]);
+    assert!(out.status.success());
+    assert_eq!(json(&out)["data"].as_array().unwrap().len(), 3);
+}
+
+#[cfg(unix)]
+#[test]
+fn prune_yes_reports_every_row_and_fails_on_any_error() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let sb = Sandbox::new();
+    let (merged, _dirty) = merged_and_dirty(&sb);
+    let repo = sb.path().join("code/a");
+    let stuck = sb.path().join("wt/stuck");
+    git(
+        &repo,
+        &["worktree", "add", "-q", "-b", "stuck", s(&stuck), "main"],
+    );
+    fs::create_dir(stuck.join("ro")).unwrap();
+    commit(&stuck, "stuck work");
+    git(&repo, &["merge", "-q", "--ff-only", "stuck"]);
+    fs::create_dir(stuck.join("ro/x")).unwrap();
+    fs::write(stuck.join("ro/x/f"), "").unwrap();
+    git(&stuck, &["add", "-A"]);
+    commit(&stuck, "nested");
+    git(&repo, &["merge", "-q", "--ff-only", "stuck"]);
+    commit(&repo, "three");
+    add_code_root(&sb);
+    let ro = stuck.join("ro/x");
+    fs::set_permissions(&ro, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let out = sb.picore(&["--json", "prune", "--yes"]);
+    fs::set_permissions(&ro, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v = json(&out);
+    let rows = v["data"]["pruned"].as_array().unwrap();
+    let row = |p: &Path| rows.iter().find(|r| r["path"] == s(p)).unwrap().clone();
+    assert_eq!(row(&merged)["removed"], true);
+    assert!(row(&merged)["error"].is_null());
+    assert_eq!(row(&stuck)["removed"], false);
+    assert!(row(&stuck)["error"].is_string());
+    assert!(!merged.exists());
+}
+
+#[test]
+fn refresh_of_indexed_root_runs_no_git() {
+    let sb = Sandbox::new();
+    sb.repo("code/a");
+    add_code_root(&sb);
+    // No git on PATH: any discovery or scan git spawn would fail the command.
+    let out = sb
+        .command()
+        .env("PATH", "")
+        .args(["--json", "list"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(json(&out)["data"][0]["name"], "a");
 }

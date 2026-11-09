@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { homeDir } from "@tauri-apps/api/path";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { Check, Detail, Overview } from "./types";
 
@@ -15,5 +17,7 @@ export const api = {
     const picked = await open({ directory: true, multiple: false });
     return typeof picked === "string" ? picked : null;
   },
+  home: () => homeDir(),
+  copy: (text: string) => writeText(text),
   onConfigChanged: (cb: () => void) => listen("config-changed", () => cb()),
 };
