@@ -658,3 +658,23 @@ fn prune_yes_reports_every_row_and_fails_on_any_error() {
     assert!(row(&stuck)["error"].is_string());
     assert!(!merged.exists());
 }
+
+#[test]
+fn refresh_of_indexed_root_runs_no_git() {
+    let sb = Sandbox::new();
+    sb.repo("code/a");
+    add_code_root(&sb);
+    // No git on PATH: any discovery or scan git spawn would fail the command.
+    let out = sb
+        .command()
+        .env("PATH", "")
+        .args(["--json", "list"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(json(&out)["data"][0]["name"], "a");
+}

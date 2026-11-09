@@ -11,7 +11,7 @@ use picore_core::info::{self, Info};
 use picore_core::model::{Project, ProjectId, project_dir};
 use picore_core::prune::{self, Assessment};
 use picore_core::refresh::{refresh, refresh_all};
-use picore_core::resolve::{Resolution, qualified, resolve};
+use picore_core::resolve::{Resolution, is_path, qualified, resolve};
 use picore_core::store::Index;
 use picore_core::view;
 use picore_core::wtname;
@@ -58,7 +58,15 @@ impl Server {
     fn lookup(&self, query: &str) -> Result<(Project, Vec<Project>)> {
         let index = self.index.lock().unwrap();
         let all = index.all()?;
-        let id = resolve(&all, query).into_target(query)?.project.id.clone();
+        // An id is exact: a path inside the Project, or its full display name. No fuzzy name.
+        let found = if is_path(query) {
+            resolve(&all, query).into_target(query)?.project
+        } else {
+            let names = view::list(&all, &Config::default());
+            let hit = all.iter().zip(names).find(|(_, v)| v.name == query);
+            hit.ok_or_else(|| Error::NotFound(query.into()))?.0
+        };
+        let id = found.id.clone();
         refresh(&index, &id)?;
         let p = index
             .get(&id)?
@@ -107,8 +115,9 @@ impl Server {
             .filter(|f| f.symlink_metadata().is_ok_and(|m| m.is_file()))
             .collect();
         let row = |w: &picore_core::model::Worktree| json!({"path": w.path, "branch": w.branch, "issue": w.issue});
+        let v = view::of(p, &projects, &cfg);
         Ok(json!({
-            "id": p.path(), "name": p.name, "product": cfg.product_of(project_dir(&p.id)), "path": dir, "repo": p.repo,
+            "id": v.id, "name": v.name, "product": v.product, "path": dir, "repo": v.repo,
             "worktree": t.worktree.map(row),
             "worktrees": p.worktrees.iter().map(row).collect::<Vec<_>>(),
             "files": files,
@@ -374,5 +383,43 @@ mod tests {
         let listed = s.list_projects().unwrap();
         let pid = listed["projects"][0]["id"].as_str().unwrap().to_owned();
         assert_eq!(s.lookup(&pid).unwrap().0.id, id);
+    }
+
+    fn init_at(s: &Server, repo: &std::path::Path) -> ProjectId {
+        std::fs::create_dir_all(repo).unwrap();
+        let ok = Command::new("git")
+            .args(["init", "-q"])
+            .arg(repo)
+            .status()
+            .unwrap();
+        assert!(ok.success());
+        let id = ProjectId(std::fs::canonicalize(repo.join(".git")).unwrap());
+        s.index.lock().unwrap().upsert(&scan(&id).unwrap()).unwrap();
+        id
+    }
+
+    #[test]
+    fn project_id_never_matches_by_substring_or_prefix() {
+        let dir = TempDir::new().unwrap();
+        let s = server(&dir);
+        let id = init_at(&s, &dir.path().join("apple"));
+        assert_eq!(s.lookup("apple").unwrap().0.id, id);
+        for q in ["appl", "pple"] {
+            assert!(matches!(s.lookup(q), Err(Error::NotFound(_))), "{q}");
+        }
+        let prefix = dir.path().join("app");
+        assert!(matches!(
+            s.lookup(prefix.to_str().unwrap()),
+            Err(Error::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn find_project_name_is_qualified_like_list_projects() {
+        let dir = TempDir::new().unwrap();
+        let s = server(&dir);
+        init_at(&s, &dir.path().join("a/core"));
+        init_at(&s, &dir.path().join("b/core"));
+        assert_eq!(s.find_project("a/core").unwrap()["name"], "a/core");
     }
 }

@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 
 use crate::config::Config;
-use crate::discovery::discover;
+use crate::discovery::{Known, discover};
 use crate::error::{Error, Result};
 use crate::git;
 use crate::model::{Project, ProjectId, Worktree, issue_of, project_name};
@@ -153,8 +153,14 @@ pub type RefreshFailures = Vec<(ProjectId, Error)>;
 
 // Discovery adds repos new under a Scan Root; only `index_all` drops Projects.
 pub fn refresh_all(index: &Index, cfg: &Config) -> Result<(Vec<Project>, RefreshFailures)> {
-    let mut ids: Vec<ProjectId> = index.all()?.into_iter().map(|p| p.id).collect();
-    ids.extend(discover(&cfg.roots, cfg.max_depth, &cfg.ignore_dirs)?);
+    let indexed = index.all()?;
+    let mut ids: Vec<ProjectId> = indexed.iter().map(|p| p.id.clone()).collect();
+    ids.extend(discover(
+        &cfg.roots,
+        cfg.max_depth,
+        &cfg.ignore_dirs,
+        &known(&indexed),
+    )?);
     ids.sort_by(|a, b| a.0.cmp(&b.0));
     ids.dedup();
     let failed = refresh_many(index, &ids)
@@ -165,7 +171,12 @@ pub fn refresh_all(index: &Index, cfg: &Config) -> Result<(Vec<Project>, Refresh
 }
 
 pub fn index_all(index: &Index, cfg: &Config) -> Result<IndexReport> {
-    let ids = discover(&cfg.roots, cfg.max_depth, &cfg.ignore_dirs)?;
+    let ids = discover(
+        &cfg.roots,
+        cfg.max_depth,
+        &cfg.ignore_dirs,
+        &known(&index.all()?),
+    )?;
     let mut report = IndexReport {
         found: ids.len(),
         ..IndexReport::default()
@@ -183,6 +194,18 @@ pub fn index_all(index: &Index, cfg: &Config) -> Result<IndexReport> {
     }
     report.removed += index.retain(&ids)?;
     Ok(report)
+}
+
+fn known(indexed: &[Project]) -> Known {
+    indexed
+        .iter()
+        .flat_map(|p| {
+            let dirs = p.worktrees.iter().map(|w| w.path.clone());
+            std::iter::once(p.id.0.clone())
+                .chain(dirs)
+                .map(move |d| (d, p.id.clone()))
+        })
+        .collect()
 }
 
 fn plan(id: &ProjectId, known: Option<i64>) -> Result<Step> {

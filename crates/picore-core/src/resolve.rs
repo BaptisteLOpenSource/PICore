@@ -47,11 +47,7 @@ impl<'a> Resolution<'a> {
 /// Path (`/`, `~`, `.`, `..`, `./`, `../`), `name@N` (Worktree of issue N), or case-insensitive
 /// `name` / `parent/name`.
 pub fn resolve<'a>(projects: &'a [Project], query: &str) -> Resolution<'a> {
-    if query.starts_with(['/', '~'])
-        || matches!(query, "." | "..")
-        || query.starts_with("../")
-        || query.starts_with("./")
-    {
+    if is_path(query) {
         return by_path(projects, query);
     }
     if let Some((name, n)) = query.rsplit_once('@')
@@ -75,6 +71,14 @@ pub fn resolve<'a>(projects: &'a [Project], query: &str) -> Resolution<'a> {
         };
     }
     by_name(projects, query)
+}
+
+/// `/`, `~`, `.`, `..`, `./`, `../`: the query is a path, never a name.
+pub fn is_path(query: &str) -> bool {
+    query.starts_with(['/', '~'])
+        || matches!(query, "." | "..")
+        || query.starts_with("../")
+        || query.starts_with("./")
 }
 
 fn by_path<'a>(projects: &'a [Project], query: &str) -> Resolution<'a> {

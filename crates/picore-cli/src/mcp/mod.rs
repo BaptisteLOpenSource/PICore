@@ -14,13 +14,13 @@ use tools::Server;
 
 #[derive(Deserialize, JsonSchema)]
 struct ProjectArg {
-    /// `id` from list_projects (Project path); a name or any path inside it also resolves
+    /// `id` from list_projects (Project path); its exact name or a path inside it also resolve, never a partial name
     project: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
 struct SectionArg {
-    /// `id` from list_projects (Project path); a name or any path inside it also resolves
+    /// `id` from list_projects (Project path); its exact name or a path inside it also resolve, never a partial name
     project: String,
     /// README.md, CLAUDE.md or AGENTS.md
     file: String,
