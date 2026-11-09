@@ -1,6 +1,6 @@
 import { createSignal, For, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
-import { facts, shortPath } from "./format";
+import { facts, pruneCmd, shortPath } from "./format";
 import { panel, textButton } from "./ui";
 import { copyText, detail, home, isWide, selectedId, setSelectedId, totals } from "./store";
 import type { Detail as DetailData } from "./types";
@@ -33,7 +33,6 @@ function Info(props: { data: DetailData }) {
       { label: "Behind", value: t.behind },
     ];
   };
-  const pruneCmd = () => `picore prune '${(selectedId() ?? "").replaceAll("'", "'\\''")}'`;
 
   return (
     <div class="flex flex-col gap-6">
@@ -106,7 +105,7 @@ function Info(props: { data: DetailData }) {
                         <span class="text-brand">
                           Prunable ({a().reason}): <code class="font-mono text-muted">picore prune</code>
                         </span>
-                        <Copy text={pruneCmd()} label="Copy command" />
+                        <Copy text={pruneCmd(w.path)} label="Copy command" />
                       </span>
                     )}
                   </Show>

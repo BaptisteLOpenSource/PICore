@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { colors } from "../../../design/tokens";
-import { facts, shortPath, sync } from "./format";
+import { facts, pruneCmd, shortPath, sync } from "./format";
 import type { Detail } from "./types";
 
 describe("shortPath", () => {
@@ -92,5 +92,11 @@ describe("contrast", () => {
   it("matches the WCAG reference values", () => {
     expect(contrast("#FFFFFF", "#000000")).toBeCloseTo(21, 5);
     expect(contrast("#777777", "#FFFFFF")).toBeCloseTo(4.48, 2);
+  });
+});
+
+describe("pruneCmd", () => {
+  it("targets the worktree path, shell-quoted", () => {
+    expect(pruneCmd("/w/it's wt")).toBe("picore prune '/w/it'\\''s wt'");
   });
 });

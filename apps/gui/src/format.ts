@@ -12,6 +12,11 @@ export function shortPath(path: string, home: string | null, max = 48): string {
   return `.../${tail}`;
 }
 
+// prune matches an exact worktree path or branch, never the Project path.
+export function pruneCmd(worktreePath: string): string {
+  return `picore prune '${worktreePath.replaceAll("'", "'\\''")}'`;
+}
+
 export function sync(t: Totals): { text: string; label: string } | null {
   const sides = [
     [t.ahead, "↑", "ahead"],
