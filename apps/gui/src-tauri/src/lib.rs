@@ -208,6 +208,7 @@ pub fn run() {
     let watched = paths.clone();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(paths)
         .setup(move |app| {
             match watch_config(app.handle(), &watched.config_file) {
