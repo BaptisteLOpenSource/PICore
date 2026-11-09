@@ -72,11 +72,14 @@ fn stdio_lists_tools() {
     assert_eq!(
         names,
         [
+            "find_project",
             "get_health",
             "get_project_context",
             "get_project_section",
+            "get_repo_info",
             "list_projects",
-            "list_worktrees"
+            "list_worktrees",
+            "worktree_name"
         ]
     );
 }

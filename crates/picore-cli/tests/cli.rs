@@ -474,3 +474,57 @@ fn exit_codes_are_stable() {
     assert_eq!(sb.picore(&["open", "zzz-none"]).status.code(), Some(4));
     assert_eq!(sb.picore(&["open", "api"]).status.code(), Some(3));
 }
+
+#[test]
+fn path_prints_project_dir_and_json() {
+    let sb = Sandbox::new();
+    let repo = sb.repo("code/a");
+    add_code_root(&sb);
+
+    let out = sb.picore(&["path", "a"]);
+    assert!(out.status.success());
+    let printed = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(
+        fs::canonicalize(printed.trim()).unwrap(),
+        fs::canonicalize(&repo).unwrap()
+    );
+    let v = json(&sb.picore(&["--json", "path", "a"]));
+    assert_eq!(v["data"]["path"].as_str().unwrap(), printed.trim());
+    assert_eq!(sb.picore(&["path", "zzz-none"]).status.code(), Some(4));
+}
+
+#[test]
+fn path_ambiguous_non_tty_fails() {
+    let sb = Sandbox::new();
+    sb.repo("code/c1/api");
+    sb.repo("code/c2/api");
+    add_code_root(&sb);
+    assert_eq!(sb.picore(&["path", "api"]).status.code(), Some(3));
+}
+
+#[test]
+fn init_prints_pcd_per_shell() {
+    let sb = Sandbox::new();
+    let text = |sh: &str| String::from_utf8(sb.picore(&["init", sh]).stdout).unwrap();
+    assert!(text("fish").starts_with("function pcd"));
+    assert!(text("fish").contains("(picore path $argv); or return"));
+    for sh in ["zsh", "bash"] {
+        let t = text(sh);
+        assert!(t.starts_with("pcd()") && t.contains(r#"picore path "$@")" || return"#));
+    }
+    assert!(!sb.picore(&["init", "nu"]).status.success());
+}
+
+#[test]
+fn info_without_origin_reports_no_github() {
+    let sb = Sandbox::new();
+    sb.repo("code/a");
+    add_code_root(&sb);
+    let v = json(&sb.picore(&["--json", "info", "a"]));
+    let d = &v["data"];
+    assert_eq!(d["name"], "a");
+    assert!(d["github"].is_null() && d["repo"].is_null());
+    assert!(d["github_error"].is_string());
+    assert!(d["tags"].as_array().unwrap().is_empty());
+    assert!(sb.picore(&["info", "a"]).status.success());
+}

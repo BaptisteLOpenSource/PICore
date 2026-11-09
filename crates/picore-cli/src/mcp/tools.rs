@@ -4,13 +4,16 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use picore_core::config::{Config, Paths};
-use picore_core::context::{self, ProjectContext, Section};
+use picore_core::context::{self, ProjectContext, Section, WHITELIST};
 use picore_core::error::{Error, Result};
 use picore_core::health::{ProjectHealth, machine_health, project_health};
+use picore_core::info::{self, Info};
 use picore_core::model::{Project, ProjectId, project_dir};
 use picore_core::prune::{self, Assessment};
 use picore_core::refresh::{refresh, refresh_all};
+use picore_core::resolve::{Resolution, qualified, resolve};
 use picore_core::store::Index;
+use picore_core::wtname;
 use serde_json::{Value, json};
 
 const HEALTH_TTL: Duration = Duration::from_secs(10);
@@ -42,6 +45,18 @@ impl Server {
         self.cfg.product_of(project_dir(&p.id))
     }
 
+    pub fn worktree_name(&self, query: &str, issue: u32) -> Result<Value> {
+        let (projects, _) = refresh_all(&self.index.lock().unwrap())?;
+        let p = resolve(&projects, query).into_target(query)?.project;
+        Ok(json!(wtname::for_issue(project_dir(&p.id), issue)?))
+    }
+
+    pub fn get_repo_info(&self, query: &str) -> Result<Info> {
+        let (projects, _) = refresh_all(&self.index.lock().unwrap())?;
+        let t = resolve(&projects, query).into_target(query)?;
+        info::info(&t, self.product_of(t.project))
+    }
+
     pub fn list_projects(&self) -> Result<Value> {
         let (projects, failed) = refresh_all(&self.index.lock().unwrap())?;
         for (id, e) in failed {
@@ -61,6 +76,35 @@ impl Server {
             })
             .collect();
         Ok(json!({"projects": rows}))
+    }
+
+    pub fn find_project(&self, query: &str) -> Result<Value> {
+        let (projects, failed) = refresh_all(&self.index.lock().unwrap())?;
+        for (id, e) in failed {
+            eprintln!("warn: {}: {e}", id.0.display());
+        }
+        let t = match resolve(&projects, query) {
+            Resolution::One(t) => t,
+            Resolution::Many(hits) => {
+                let names: Vec<String> = hits.into_iter().map(qualified).collect();
+                return Ok(json!({"candidates": names}));
+            }
+            Resolution::None => return Err(Error::NotFound(query.into())),
+        };
+        let p = t.project;
+        let dir = t.dir().unwrap_or_else(|| project_dir(&p.id));
+        let files: Vec<_> = WHITELIST
+            .iter()
+            .map(|f| dir.join(f))
+            .filter(|f| f.symlink_metadata().is_ok_and(|m| m.is_file()))
+            .collect();
+        let row = |w: &picore_core::model::Worktree| json!({"path": w.path, "branch": w.branch, "issue": w.issue});
+        Ok(json!({
+            "id": p.id.0, "name": p.name, "product": self.product_of(p), "path": dir, "repo": p.repo,
+            "worktree": t.worktree.map(row),
+            "worktrees": p.worktrees.iter().map(row).collect::<Vec<_>>(),
+            "files": files,
+        }))
     }
 
     pub fn get_project_context(&self, project: &str) -> Result<ProjectContext> {
@@ -148,6 +192,24 @@ mod tests {
         assert_eq!(s.lookup(&git_dir).unwrap().id, id);
         let work_tree = dir.path().join("repo");
         assert_eq!(s.lookup(work_tree.to_str().unwrap()).unwrap().id, id);
+    }
+
+    #[test]
+    fn find_project_by_name_and_path() {
+        let dir = TempDir::new().unwrap();
+        let s = server(&dir);
+        let (_, id) = git_project(&dir, &s);
+        let root = id.0.parent().unwrap();
+        std::fs::write(root.join("README.md"), "# r").unwrap();
+        let v = s.find_project("repo").unwrap();
+        assert_eq!(v["path"], json!(root));
+        assert_eq!(v["id"], json!(id.0));
+        assert_eq!(v["files"], json!([root.join("README.md")]));
+        assert_eq!(v["worktree"], Value::Null);
+        let v = s.find_project(root.to_str().unwrap()).unwrap();
+        assert_eq!(v["name"], "repo");
+        assert_eq!(v["worktree"]["branch"], "main");
+        assert!(matches!(s.find_project("zzz"), Err(Error::NotFound(_))));
     }
 
     #[test]

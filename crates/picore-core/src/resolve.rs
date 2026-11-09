@@ -1,14 +1,105 @@
-use crate::model::{Project, project_dir};
+use std::env;
+use std::path::{Path, PathBuf};
+
+use crate::error::{Error, Result};
+use crate::model::{Project, Worktree, project_dir};
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Target<'a> {
+    pub project: &'a Project,
+    pub worktree: Option<&'a Worktree>,
+}
+
+impl Target<'_> {
+    /// Matched Worktree, else main work tree, else first linked Worktree.
+    pub fn dir(&self) -> Option<&Path> {
+        self.worktree
+            .map(|w| w.path.as_path())
+            .or(self.project.work_tree.as_deref())
+            .or_else(|| {
+                self.project
+                    .linked_worktrees()
+                    .next()
+                    .map(|w| w.path.as_path())
+            })
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Resolution<'a> {
-    One(&'a Project),
+    One(Target<'a>),
     Many(Vec<&'a Project>),
     None,
 }
 
-/// Case-insensitive. `parent/name` restricts matches to Projects whose parent dir is `parent`.
+impl<'a> Resolution<'a> {
+    pub fn into_target(self, query: &str) -> Result<Target<'a>> {
+        match self {
+            Resolution::One(t) => Ok(t),
+            Resolution::Many(hits) => {
+                Err(Error::Ambiguous(hits.into_iter().map(qualified).collect()))
+            }
+            Resolution::None => Err(Error::NotFound(query.to_owned())),
+        }
+    }
+}
+
+/// Path (`/`, `~`, `.`, `..`, `./`, `../`), `name@N` (Worktree of issue N), or case-insensitive
+/// `name` / `parent/name`.
 pub fn resolve<'a>(projects: &'a [Project], query: &str) -> Resolution<'a> {
+    if query.starts_with(['/', '~'])
+        || matches!(query, "." | "..")
+        || query.starts_with("../")
+        || query.starts_with("./")
+    {
+        return by_path(projects, query);
+    }
+    if let Some((name, n)) = query.rsplit_once('@')
+        && !n.is_empty()
+        && n.bytes().all(|b| b.is_ascii_digit())
+    {
+        let Ok(issue) = n.parse::<u32>() else {
+            return Resolution::None;
+        };
+        return match by_name(projects, name) {
+            Resolution::One(t) => {
+                let worktree = t.project.worktrees.iter().find(|w| w.issue == Some(issue));
+                worktree.map_or(Resolution::None, |w| {
+                    Resolution::One(Target {
+                        worktree: Some(w),
+                        ..t
+                    })
+                })
+            }
+            r => r,
+        };
+    }
+    by_name(projects, query)
+}
+
+fn by_path<'a>(projects: &'a [Project], query: &str) -> Resolution<'a> {
+    let raw = match query.strip_prefix('~') {
+        Some(rest) => match env::var_os("HOME") {
+            Some(home) => PathBuf::from(home).join(rest.trim_start_matches('/')),
+            None => return Resolution::None,
+        },
+        None => PathBuf::from(query),
+    };
+    let path = raw.canonicalize().unwrap_or(raw);
+    projects
+        .iter()
+        .flat_map(|p| p.worktrees.iter().map(move |w| (p, w)))
+        .filter(|(_, w)| path.starts_with(&w.path))
+        .max_by_key(|(_, w)| w.path.components().count())
+        .map_or(Resolution::None, |(project, w)| {
+            Resolution::One(Target {
+                project,
+                worktree: Some(w),
+            })
+        })
+}
+
+fn by_name<'a>(projects: &'a [Project], query: &str) -> Resolution<'a> {
     let query = query.to_lowercase();
     let (parent, needle) = match query.rsplit_once('/') {
         Some((parent, name)) => (Some(parent), name),
@@ -35,7 +126,12 @@ pub fn resolve<'a>(projects: &'a [Project], query: &str) -> Resolution<'a> {
             .collect();
         match hits.len() {
             0 => continue,
-            1 => return Resolution::One(hits[0]),
+            1 => {
+                return Resolution::One(Target {
+                    project: hits[0],
+                    worktree: None,
+                });
+            }
             _ => return Resolution::Many(hits),
         }
     }
@@ -68,6 +164,7 @@ mod tests {
             id,
             work_tree: Some(PathBuf::from(dir)),
             branch: None,
+            repo: None,
             techs: vec![],
             worktrees: vec![],
             stamp: 0,
@@ -81,7 +178,7 @@ mod tests {
     #[test]
     fn exact_beats_prefix() {
         let ps = [project("/src/api"), project("/src/apiary")];
-        let Resolution::One(p) = resolve(&ps, "api") else {
+        let Resolution::One(Target { project: p, .. }) = resolve(&ps, "api") else {
             panic!("expected One");
         };
         assert_eq!(p.name, "api");
@@ -99,7 +196,7 @@ mod tests {
     #[test]
     fn qualifier_disambiguates() {
         let ps = [project("/src/client-a/api"), project("/src/client-b/api")];
-        let Resolution::One(p) = resolve(&ps, "client-b/api") else {
+        let Resolution::One(Target { project: p, .. }) = resolve(&ps, "client-b/api") else {
             panic!("expected One");
         };
         assert_eq!(
@@ -120,7 +217,7 @@ mod tests {
     #[test]
     fn substring_fallback() {
         let ps = [project("/src/paint-the-dead")];
-        let Resolution::One(p) = resolve(&ps, "dead") else {
+        let Resolution::One(Target { project: p, .. }) = resolve(&ps, "dead") else {
             panic!("expected One");
         };
         assert_eq!(p.name, "paint-the-dead");
@@ -130,6 +227,62 @@ mod tests {
     fn case_insensitive() {
         let ps = [project("/src/Api")];
         assert!(matches!(resolve(&ps, "API"), Resolution::One(_)));
+    }
+
+    fn issue_project(dir: &str, branches: &[&str]) -> Project {
+        let mut p = project(dir);
+        p.worktrees = branches
+            .iter()
+            .map(|b| Worktree {
+                path: PathBuf::from(format!("{dir}/../wt-{b}")),
+                branch: Some((*b).to_owned()),
+                head: None,
+                is_main: false,
+                detached: false,
+                locked: false,
+                last_commit_at: None,
+                issue: crate::model::issue_of(b),
+            })
+            .collect();
+        p
+    }
+
+    #[test]
+    fn name_at_issue_picks_worktree() {
+        let ps = [issue_project("/src/api", &["main", "12-a", "80-b"])];
+        let Resolution::One(t) = resolve(&ps, "api@80") else {
+            panic!("expected One");
+        };
+        assert_eq!(t.worktree.unwrap().branch.as_deref(), Some("80-b"));
+        assert_eq!(resolve(&ps, "api@7"), Resolution::None);
+        assert_eq!(resolve(&ps, "api@99999999999"), Resolution::None);
+    }
+
+    #[test]
+    fn dot_prefixed_name_resolves_by_name() {
+        let ps = [project("/src/.dotfiles")];
+        let Resolution::One(t) = resolve(&ps, ".dotfiles") else {
+            panic!("expected One");
+        };
+        assert_eq!(t.project.name, ".dotfiles");
+    }
+
+    #[test]
+    fn dir_falls_back_to_first_linked_worktree_when_bare() {
+        let mut p = issue_project("/src/api", &["main", "12-a"]);
+        p.work_tree = None;
+        p.worktrees[0].is_main = true;
+        let t = Target {
+            project: &p,
+            worktree: None,
+        };
+        assert_eq!(t.dir(), Some(p.worktrees[1].path.as_path()));
+        p.worktrees.truncate(1);
+        let t = Target {
+            project: &p,
+            worktree: None,
+        };
+        assert_eq!(t.dir(), None);
     }
 
     #[test]

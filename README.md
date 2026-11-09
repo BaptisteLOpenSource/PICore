@@ -78,6 +78,17 @@ picore completions zsh > ~/.zfunc/_picore
 picore man > picore.1
 ```
 
+`picore path <query>` prints a Project or Worktree directory. `pcd` wraps it in `cd`:
+
+```sh
+picore init fish | source        # fish; zsh/bash: eval "$(picore init zsh)"
+pcd room-booking/backend && claude
+```
+
+`picore wt-name <issue> [project]` prints the canonical branch (`<issue>-<slug>`) and Worktree
+path (`<project>.worktrees/<issue>-<slug>`) from the issue title, fetched with `gh` inside the
+Project. It creates nothing; the project defaults to the current directory.
+
 Config and Index live in XDG paths: `~/.config/picore/config.toml` and
 `~/.local/share/picore/picore.db`. Set `PICORE_CONFIG_DIR` and `PICORE_DATA_DIR` to override.
 
@@ -92,8 +103,15 @@ picore root add ~/Documents/Git
 picore index
 # indexed 9 projects: 9 updated, 0 removed
 picore list
-# NAME             PRODUCT  BRANCH         WT  TECHS                             PATH
-# PICore           -        dev            14  -                                 ~/Documents/Git/Config/PICore
+# NAME             PRODUCT  BRANCH         WT  TECHS  REPO                  PATH
+# PICore           -        dev            14  -      BaptisteLeDev/PICore  ~/Documents/Git/Config/PICore
+# (Projects grouped under a `<product>` line, ungrouped last)
+picore info PICore
+# name        PICore
+# path        ~/Documents/Git/Config/PICore
+# repo        BaptisteLeDev/PICore
+# tags        v0.3.0, v0.2.0
+# stars       3   (GitHub fields via gh; `github` is null with a reason if gh fails)
 picore status
 # git: Ok git version 2.56.0
 # ssh-agent: Ok agent has keys
@@ -105,6 +123,9 @@ picore prune
 # dry run: nothing removed (use --yes)
 # ...one line per Prunable Worktree, omitted
 ```
+
+Commands that take a Project name also accept `name@<issue>` (the Worktree on branch
+`<issue>-...`) and a path (`/`, `~`, `.`) inside a Project or Worktree. `picore open api@80` opens that Worktree.
 
 `picore gui` launches the `picore-gui` binary from the GUI bundle, detached, and returns at once.
 
@@ -146,9 +167,13 @@ Or in any MCP client config:
 
 Upgrading from `picore-mcp`: the binary is gone. Replace the command with `picore` and the args with `["mcp"]`.
 
-Tools: `list_projects`, `get_project_context`, `get_project_section`, `list_worktrees`,
-`get_health`. Project context is read from `README.md`, `CLAUDE.md` and `AGENTS.md` only.
-Pass the `id` returned by `list_projects` as the `project` argument.
+Tools: `list_projects`, `find_project`, `get_project_context`, `get_project_section`,
+`list_worktrees`, `get_health`, `worktree_name` (`project`, `issue`), `get_repo_info` (`query`).
+`find_project`, `get_repo_info` and `worktree_name.project` take a query: a name, `parent/name`,
+`name@<issue>` (the Worktree on branch `<issue>-...`) or a path inside a Project or Worktree.
+Project context is read from `README.md`, `CLAUDE.md` and `AGENTS.md` only.
+`get_project_context`, `get_project_section`, `list_worktrees` and `get_health` take the `id` returned
+by `list_projects` or `find_project`.
 
 ## Documentation
 

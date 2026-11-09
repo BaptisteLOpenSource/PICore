@@ -159,6 +159,59 @@ fn filter_blanks(work_tree: &Path) -> Result<Vec<String>> {
         .collect())
 }
 
+/// `owner/name` from an origin URL (https, ssh://, scp-like); any host.
+pub fn parse_repo(url: &str) -> Option<String> {
+    let url = url.trim().trim_end_matches('/');
+    let url = url.strip_suffix(".git").unwrap_or(url);
+    let path = match url.split_once("://") {
+        Some((_, rest)) => rest.split_once('/')?.1,
+        None => url.split_once(':')?.1,
+    };
+    let mut parts = path.rsplit('/').filter(|s| !s.is_empty());
+    let name = parts.next()?;
+    let owner = parts.next()?;
+    // slug reaches `gh repo view`: a leading `-` would parse as a flag
+    let sane = |s: &str| {
+        !s.starts_with('-')
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+    };
+    (sane(owner) && sane(name)).then(|| format!("{owner}/{name}"))
+}
+
+/// `owner/name` only when the origin host looks like GitHub (`github-work`
+/// ssh aliases included); other hosts must not reach `gh`.
+pub fn github_repo(url: &str) -> Option<String> {
+    let url = url.trim();
+    let authority = match url.split_once("://") {
+        Some((_, rest)) => rest.split('/').next()?,
+        None => url.split(':').next()?,
+    };
+    let host = authority.rsplit('@').next()?;
+    if host.to_lowercase().contains("github") {
+        parse_repo(url)
+    } else {
+        None
+    }
+}
+
+pub fn origin_url(repo: &Path) -> Result<Option<String>> {
+    match git(repo, &["config", "--get", "remote.origin.url"]) {
+        Ok(url) => Ok(Some(url)),
+        Err(Error::Proc(ProcError::Failed { .. })) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+pub fn origin_repo(repo: &Path) -> Result<Option<String>> {
+    Ok(origin_url(repo)?.and_then(|url| parse_repo(&url)))
+}
+
+pub fn tags(work_tree: &Path, n: usize) -> Result<Vec<String>> {
+    let out = git(work_tree, &["tag", "--sort=-creatordate"])?;
+    Ok(out.lines().take(n).map(str::to_owned).collect())
+}
+
 pub fn common_dir(path: &Path) -> Result<PathBuf> {
     let out = git(path, &["rev-parse", "--git-common-dir"])?;
     Ok(path.join(out.trim_end_matches('\n')).canonicalize()?)
@@ -290,5 +343,42 @@ fn verifies(repo: &Path, rev: &str) -> Result<bool> {
         Ok(_) => Ok(true),
         Err(Error::Proc(ProcError::Failed { .. })) => Ok(false),
         Err(e) => Err(e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn repo_from_origin_url() {
+        for (url, want) in [
+            ("https://github.com/o/n.git\n", Some("o/n")),
+            ("https://github.com/o/n", Some("o/n")),
+            ("ssh://git@github.com/o/n.git", Some("o/n")),
+            ("git@github.com:o/n.git", Some("o/n")),
+            ("https://gitlab.com/g/sub/n.git", Some("sub/n")),
+            ("/srv/git/n.git", None),
+            ("", None),
+            ("git@h:--web/x", None),
+            ("https://github.com/-x/y", None),
+            ("https://github.com/o/-y", None),
+            ("https://github.com/o/a b", None),
+            ("git@github.com:o/n.js.git", Some("o/n.js")),
+        ] {
+            assert_eq!(super::parse_repo(url).as_deref(), want, "{url}");
+        }
+    }
+
+    #[test]
+    fn github_repo_gates_on_host() {
+        for (url, want) in [
+            ("https://github.com/o/n.git", Some("o/n")),
+            ("git@github-work:o/n.git", Some("o/n")),
+            ("ssh://git@github.example.com:2222/o/n", Some("o/n")),
+            ("https://gitlab.com/o/n.git", None),
+            ("git@gitlab.com:github/n.git", None),
+            ("https://user@bitbucket.org/o/n", None),
+        ] {
+            assert_eq!(super::github_repo(url).as_deref(), want, "{url}");
+        }
     }
 }
