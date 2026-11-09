@@ -110,7 +110,11 @@ fn verdict(repo: &Path, wt: &Worktree) -> Result<Verdict> {
         return Ok(Verdict::Kept(Blocker::EnvFile));
     }
     // Any enclosing dir counts: build output nests (android/app/build).
+    // ls-files lists a nested repo as its dir: its commits are not rebuildable.
     let blocking = ignored.iter().any(|p| {
+        if p.join(".git").symlink_metadata().is_ok() {
+            return true;
+        }
         let dirs = p.strip_prefix(&wt.path).ok().and_then(Path::parent);
         !dirs.is_some_and(|d| {
             d.components()

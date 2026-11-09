@@ -350,3 +350,31 @@ fn verdict_json_is_tagged_and_flat() {
     let blocker = serde_json::to_value(Verdict::Kept(Blocker::NotMerged)).unwrap();
     assert_eq!(blocker["reason"], "not_merged");
 }
+
+#[test]
+fn untracked_hidden_by_config_is_kept_and_never_removed() {
+    let r = TestRepo::new();
+    r.run(&["config", "status.showUntrackedFiles", "no"]);
+    let wt = feat_worktree(&r);
+    merge_feat(&r);
+    let p = project(&r);
+    let clean = assess(&p, linked(&p), &Config::default(), now());
+    assert_eq!(clean.verdict, Verdict::Prunable(Reason::Merged));
+    fs::write(wt.join("new.txt"), "x").unwrap();
+    assert_eq!(verdict_of(&r), Verdict::Kept(Blocker::Changes));
+    assert!(remove(&p, &clean, false).is_err());
+    assert!(wt.join("new.txt").is_file());
+}
+
+#[test]
+fn nested_repo_in_rebuildable_dir_is_kept() {
+    let r = TestRepo::new();
+    r.write(".gitignore", "build/\n");
+    r.commit("ignore");
+    let wt = feat_worktree(&r);
+    merge_feat(&r);
+    let nested = wt.join("build/somerepo");
+    fs::create_dir_all(&nested).unwrap();
+    r.run_in(&nested, &["init", "-q"]);
+    assert_eq!(verdict_of(&r), Verdict::Kept(Blocker::IgnoredFiles));
+}

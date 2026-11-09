@@ -135,6 +135,7 @@ pub fn status(work_tree: &Path) -> Result<StatusSummary> {
             "--porcelain=v2",
             "--branch",
             "-z",
+            "--untracked-files=all",
             "--ignore-submodules=all",
         ],
     )?))
@@ -158,7 +159,8 @@ fn driver_blanks(work_tree: &Path) -> Result<Env> {
         ],
     ) {
         Ok(out) => out,
-        Err(Error::Proc(ProcError::Failed { .. })) => return Ok(Vec::new()),
+        // Exit 1 = no match; any other failure must not run without blanks.
+        Err(Error::Proc(ProcError::Failed { code: Some(1), .. })) => return Ok(Vec::new()),
         Err(e) => return Err(e),
     };
     let fields: Vec<&str> = out.split('\0').collect();
@@ -400,7 +402,9 @@ pub fn remove_worktree(repo: &Path, path: &Path, force: bool) -> Result<()> {
     } else {
         vec!["worktree", "remove", path]
     };
-    git_env(repo, &[], &blanks, &args).map(|_| ())
+    // git's own clean check must see untracked files a user config hides.
+    let config = ["status.showUntrackedFiles=all"];
+    git_env(repo, &config, &blanks, &args).map(|_| ())
 }
 
 pub fn prune_worktrees(repo: &Path) -> Result<()> {
