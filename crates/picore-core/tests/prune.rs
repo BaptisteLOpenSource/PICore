@@ -35,7 +35,7 @@ fn fresh_branch_is_kept_not_merged() {
     let wt = r.tmp().join("wt");
     r.add_worktree(&wt, "feat");
     let p = project(&r);
-    let a = assess(&p, linked(&p), &Config::default(), now()).unwrap();
+    let a = assess(&p, linked(&p), &Config::default(), now());
     assert_eq!(a.verdict, Verdict::Kept(Blocker::NotMerged));
     assert_eq!(a.branch.as_deref(), Some("feat"));
 }
@@ -46,7 +46,7 @@ fn merged_clean_is_prunable() {
     let wt = feat_worktree(&r);
     merge_feat(&r);
     let p = project(&r);
-    let a = assess(&p, linked(&p), &Config::default(), now()).unwrap();
+    let a = assess(&p, linked(&p), &Config::default(), now());
     assert_eq!(a.verdict, Verdict::Prunable(Reason::Merged));
     remove(&p, &a, false).unwrap();
     assert!(!wt.exists());
@@ -59,8 +59,8 @@ fn dirty_is_kept() {
     r.add_worktree(&wt, "feat");
     fs::write(wt.join("untracked.txt"), "x").unwrap();
     let p = project(&r);
-    let a = assess(&p, linked(&p), &Config::default(), now()).unwrap();
-    assert_eq!(a.verdict, Verdict::Kept(Blocker::Changes(1)));
+    let a = assess(&p, linked(&p), &Config::default(), now());
+    assert_eq!(a.verdict, Verdict::Kept(Blocker::Changes));
 }
 
 #[test]
@@ -74,7 +74,7 @@ fn env_file_blocks() {
     r.write("next.txt", "x");
     r.commit("next");
     let p = project(&r);
-    let a = assess(&p, linked(&p), &Config::default(), now()).unwrap();
+    let a = assess(&p, linked(&p), &Config::default(), now());
     assert_eq!(a.verdict, Verdict::Kept(Blocker::EnvFile));
 }
 
@@ -85,7 +85,7 @@ fn missing_dir_is_prunable() {
     r.add_worktree(&wt, "feat");
     fs::remove_dir_all(&wt).unwrap();
     let p = project(&r);
-    let a = assess(&p, linked(&p), &Config::default(), now()).unwrap();
+    let a = assess(&p, linked(&p), &Config::default(), now());
     assert_eq!(a.verdict, Verdict::Prunable(Reason::Missing));
     remove(&p, &a, false).unwrap();
     let listed = picore_core::git::worktrees(&r.path().join(".git")).unwrap();
@@ -97,7 +97,7 @@ fn main_and_locked_refused_even_forced() {
     let r = TestRepo::new();
     let p = project(&r);
     let main = p.worktrees.iter().find(|w| w.is_main).unwrap();
-    let a = assess(&p, main, &Config::default(), now()).unwrap();
+    let a = assess(&p, main, &Config::default(), now());
     assert_eq!(a.verdict, Verdict::Kept(Blocker::Main));
     assert!(remove(&p, &a, true).is_err());
 
@@ -105,7 +105,7 @@ fn main_and_locked_refused_even_forced() {
     r.add_worktree(&wt, "feat");
     r.run(&["worktree", "lock", wt.to_str().unwrap()]);
     let p = project(&r);
-    let a = assess(&p, linked(&p), &Config::default(), now()).unwrap();
+    let a = assess(&p, linked(&p), &Config::default(), now());
     assert_eq!(a.verdict, Verdict::Kept(Blocker::Locked));
     assert!(remove(&p, &a, true).is_err());
     assert!(wt.is_dir());
@@ -118,8 +118,8 @@ fn force_removes_named_dirty_worktree() {
     r.add_worktree(&wt, "feat");
     fs::write(wt.join("untracked.txt"), "x").unwrap();
     let p = project(&r);
-    let a = assess(&p, linked(&p), &Config::default(), now()).unwrap();
-    assert_eq!(a.verdict, Verdict::Kept(Blocker::Changes(1)));
+    let a = assess(&p, linked(&p), &Config::default(), now());
+    assert_eq!(a.verdict, Verdict::Kept(Blocker::Changes));
     assert!(remove(&p, &a, false).is_err());
     assert!(wt.is_dir());
     remove(&p, &a, true).unwrap();
@@ -135,16 +135,8 @@ fn stale_flag_uses_stale_days() {
     let p = project(&r);
     let w = linked(&p);
     let last = w.last_commit_at.unwrap();
-    assert!(
-        assess(&p, w, &Config::default(), last + 31 * DAY)
-            .unwrap()
-            .stale
-    );
-    assert!(
-        !assess(&p, w, &Config::default(), last + 29 * DAY)
-            .unwrap()
-            .stale
-    );
+    assert!(assess(&p, w, &Config::default(), last + 31 * DAY).stale);
+    assert!(!assess(&p, w, &Config::default(), last + 29 * DAY).stale);
 }
 
 #[test]
@@ -158,7 +150,7 @@ fn merged_with_ignored_files_is_kept() {
     r.commit("next");
     fs::write(wt.join("secret.key"), "k").unwrap();
     let p = project(&r);
-    let a = assess(&p, linked(&p), &Config::default(), now()).unwrap();
+    let a = assess(&p, linked(&p), &Config::default(), now());
     assert_eq!(a.verdict, Verdict::Kept(Blocker::IgnoredFiles));
 }
 
@@ -172,7 +164,7 @@ fn merged_with_only_rebuildable_ignored_dir_is_prunable() {
     fs::create_dir(wt.join("target")).unwrap();
     fs::write(wt.join("target/x"), "b").unwrap();
     let p = project(&r);
-    let a = assess(&p, linked(&p), &Config::default(), now()).unwrap();
+    let a = assess(&p, linked(&p), &Config::default(), now());
     assert_eq!(a.verdict, Verdict::Prunable(Reason::Merged));
 }
 
@@ -188,7 +180,7 @@ fn env_file_inside_rebuildable_dir_is_kept() {
     fs::create_dir(wt.join("target")).unwrap();
     fs::write(wt.join("target/.env"), "K=V").unwrap();
     let p = project(&r);
-    let a = assess(&p, linked(&p), &Config::default(), now()).unwrap();
+    let a = assess(&p, linked(&p), &Config::default(), now());
     assert_eq!(a.verdict, Verdict::Kept(Blocker::EnvFile));
 }
 
@@ -227,9 +219,7 @@ fn merge_feat(r: &TestRepo) {
 
 fn verdict_of(r: &TestRepo) -> Verdict {
     let p = project(r);
-    assess(&p, linked(&p), &Config::default(), now())
-        .unwrap()
-        .verdict
+    assess(&p, linked(&p), &Config::default(), now()).verdict
 }
 
 #[test]
@@ -317,8 +307,46 @@ fn merged_with_build_output_dirs_is_prunable() {
     fs::create_dir_all(wt.join("android/.gradle")).unwrap();
     fs::write(wt.join("android/.gradle/lock"), "b").unwrap();
     let p = project(&r);
-    let a = assess(&p, linked(&p), &Config::default(), now()).unwrap();
+    let a = assess(&p, linked(&p), &Config::default(), now());
     assert_eq!(a.verdict, Verdict::Prunable(Reason::Merged));
     remove(&p, &a, false).unwrap();
     assert!(!wt.exists());
+}
+
+#[test]
+fn broken_worktree_is_unknown_and_never_removed() {
+    let r = TestRepo::new();
+    let wt = r.tmp().join("wt");
+    r.add_worktree(&wt, "feat");
+    let p = project(&r);
+    fs::write(wt.join(".git"), "gitdir: /picore-no-such\n").unwrap();
+    let a = assess(&p, linked(&p), &Config::default(), now());
+    assert!(matches!(a.verdict, Verdict::Unknown(_)), "{:?}", a.verdict);
+    assert!(remove(&p, &a, true).is_err());
+    assert!(wt.is_dir());
+}
+
+#[test]
+fn verdict_json_is_tagged_and_flat() {
+    let r = TestRepo::new();
+    let wt = r.tmp().join("wt");
+    r.add_worktree(&wt, "feat");
+    fs::write(wt.join("untracked.txt"), "x").unwrap();
+    let p = project(&r);
+    let a = assess(&p, linked(&p), &Config::default(), now());
+    let v = serde_json::to_value(&a).unwrap();
+    assert_eq!(
+        (v["verdict"].as_str(), v["reason"].as_str()),
+        (Some("kept"), Some("changes"))
+    );
+    let main = assess(&p, &p.worktrees[0], &Config::default(), now());
+    let v = serde_json::to_value(&main).unwrap();
+    assert_eq!(v["reason"], "main");
+    let missing = picore_core::prune::Verdict::Prunable(Reason::Missing);
+    assert_eq!(
+        serde_json::to_value(&missing).unwrap(),
+        serde_json::json!({"verdict": "prunable", "reason": "missing"})
+    );
+    let blocker = serde_json::to_value(Verdict::Kept(Blocker::NotMerged)).unwrap();
+    assert_eq!(blocker["reason"], "not_merged");
 }

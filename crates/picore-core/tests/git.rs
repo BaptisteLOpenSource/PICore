@@ -125,7 +125,7 @@ fn parse_worktree_list_reads_flags_and_strips_ref() {
     let list = git::parse_worktree_list(z);
     assert_eq!(list.len(), 2);
     assert_eq!(list[0].branch.as_deref(), Some("main"));
-    assert!(list[1].detached && list[1].locked && !list[1].prunable);
+    assert!(list[1].detached && list[1].locked);
     assert_eq!(list[1].branch, None);
 }
 

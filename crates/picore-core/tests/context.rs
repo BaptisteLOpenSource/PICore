@@ -4,10 +4,20 @@ mod support;
 
 use std::fs;
 
-use picore_core::context::{context, safe_read, section};
-use picore_core::model::ProjectId;
+use picore_core::config::Config;
+use picore_core::context::{ProjectContext, safe_read, section};
+use picore_core::model::{Project, ProjectId};
 use picore_core::refresh::scan;
+use picore_core::view;
 use support::TestRepo;
+
+fn context(p: &Project) -> picore_core::error::Result<ProjectContext> {
+    with_config(p, &Config::default())
+}
+
+fn with_config(p: &Project, cfg: &Config) -> picore_core::error::Result<ProjectContext> {
+    picore_core::context::context(p, &view::of(p, std::slice::from_ref(p), cfg))
+}
 
 #[test]
 fn symlink_outside_root_refused() {
@@ -94,4 +104,22 @@ fn read_capped_at_one_mib() {
     r.write("README.md", &"x".repeat(2 << 20));
     let md = safe_read(r.path(), "README.md").unwrap().unwrap();
     assert_eq!(md.len(), 1 << 20);
+}
+
+#[test]
+fn context_carries_product_from_config() {
+    let r = TestRepo::new();
+    let p = scan(&ProjectId(r.path().join(".git").canonicalize().unwrap())).unwrap();
+    let f = r.tmp().join("config.toml");
+    let root = r.tmp().canonicalize().unwrap();
+    fs::write(
+        &f,
+        format!("[products.demo]\npath = \"{}\"\n", root.display()),
+    )
+    .unwrap();
+    let cfg = Config::load(&f).unwrap();
+    assert_eq!(
+        with_config(&p, &cfg).unwrap().product.as_deref(),
+        Some("demo")
+    );
 }

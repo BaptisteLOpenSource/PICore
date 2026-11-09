@@ -20,10 +20,11 @@ export type Worktree = {
 export type WorktreeHealth = {
   path: string;
   branch: string | null;
-  dirty: number;
+  dirty: number | null;
   ahead: number | null;
   behind: number | null;
   upstream: string | null;
+  error: string | null;
 };
 
 export type ProjectHealth = {
@@ -31,16 +32,16 @@ export type ProjectHealth = {
   remote: Check | null;
 };
 
+// Rust `view::ProjectView` + health. `id` = Project path, `worktrees` = count incl. main.
 export type Listed = {
   id: string;
   name: string;
-  work_tree: string | null;
-  branch: string | null;
-  techs: string[];
-  worktrees: Worktree[];
-  stamp: number;
   product: string | null;
-  health: ProjectHealth | null;
+  branch: string | null;
+  repo: string | null;
+  techs: string[];
+  worktrees: number;
+  health: ProjectHealth;
 };
 
 export type Heading = { level: number; text: string };

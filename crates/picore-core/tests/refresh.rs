@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use picore_core::config::Config;
 use picore_core::model::ProjectId;
-use picore_core::refresh::{Outcome, index_all, refresh, refresh_all, scan, stamp};
+use picore_core::refresh::{Outcome, index_all, refresh, refresh_all, refresh_many, scan, stamp};
 use picore_core::store::Index;
 use support::TestRepo;
 use tempfile::TempDir;
@@ -208,37 +208,44 @@ fn refresh_all_sees_new_worktree() {
     refresh(&index, &repo_id(&r)).unwrap();
     thread::sleep(Duration::from_millis(10));
     r.add_worktree(&r.tmp().join("wt"), "feat");
-    let (projects, failed) = refresh_all(&index).unwrap();
+    let (projects, failed) = refresh_all(&index, &Config::default()).unwrap();
     assert!(failed.is_empty());
     assert_eq!(projects[0].linked_worktrees().count(), 1);
 }
 
 #[test]
-fn index_find_matches_git_dir_or_work_tree() {
-    let r = TestRepo::new();
+fn refresh_all_discovers_new_repo_under_scan_root() {
+    let a = TestRepo::new();
     let db = TempDir::new().unwrap();
     let index = open(&db);
-    let id = repo_id(&r);
-    refresh(&index, &id).unwrap();
-    assert_eq!(index.find(&id.0).unwrap().unwrap().id, id);
-    assert_eq!(index.find(r.path()).unwrap().unwrap().id, id);
-    assert!(index.find(r.tmp()).unwrap().is_none());
+    let cfg = Config {
+        roots: vec![a.tmp().to_path_buf()],
+        ..Config::default()
+    };
+    index_all(&index, &cfg).unwrap();
+    let fresh = a.tmp().join("fresh");
+    fs::create_dir(&fresh).unwrap();
+    a.run_in(&fresh, &["init", "-q"]);
+    let (projects, failed) = refresh_all(&index, &cfg).unwrap();
+    assert!(failed.is_empty());
+    assert_eq!(projects.len(), 2);
 }
 
 #[test]
-fn index_find_matches_linked_worktree_and_subdirs() {
+fn refresh_many_keeps_order_across_worker_chunks() {
     let r = TestRepo::new();
-    let wt = r.tmp().join("wt");
-    r.add_worktree(&wt, "feat");
-    fs::create_dir_all(wt.join("src/deep")).unwrap();
-    fs::create_dir_all(r.path().join("docs")).unwrap();
     let db = TempDir::new().unwrap();
     let index = open(&db);
-    let id = repo_id(&r);
-    refresh(&index, &id).unwrap();
-    assert_eq!(index.find(&wt).unwrap().unwrap().id, id);
-    assert_eq!(index.find(&wt.join("src/deep")).unwrap().unwrap().id, id);
-    assert_eq!(index.find(&r.path().join("docs")).unwrap().unwrap().id, id);
+    let mut ids: Vec<ProjectId> = (0..19)
+        .map(|i| ProjectId(r.tmp().join(format!("gone{i}"))))
+        .collect();
+    ids.push(repo_id(&r));
+    let outcomes: Vec<Outcome> = refresh_many(&index, &ids)
+        .into_iter()
+        .map(|(_, o)| o.unwrap())
+        .collect();
+    assert_eq!(outcomes[19], Outcome::Updated);
+    assert!(outcomes[..19].iter().all(|o| *o == Outcome::Gone));
 }
 
 #[test]

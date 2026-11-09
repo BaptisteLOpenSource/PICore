@@ -23,12 +23,12 @@ export type Totals = { dirty: number; ahead: number | null; behind: number | nul
 export function totals(h: ProjectHealth): Totals {
   const sum = (k: "ahead" | "behind") =>
     h.worktrees.reduce<number | null>((acc, w) => (w[k] === null ? acc : (acc ?? 0) + w[k]), null);
-  return { dirty: h.worktrees.reduce((n, w) => n + w.dirty, 0), ahead: sum("ahead"), behind: sum("behind") };
+  return { dirty: h.worktrees.reduce((n, w) => n + (w.dirty ?? 0), 0), ahead: sum("ahead"), behind: sum("behind") };
 }
 
 export const needsAttention = (h: ProjectHealth | null) => {
   const t = h && totals(h);
-  return !!t && t.dirty + (t.ahead ?? 0) + (t.behind ?? 0) > 0;
+  return !!t && (t.dirty + (t.ahead ?? 0) + (t.behind ?? 0) > 0 || h.worktrees.some((w) => w.error !== null));
 };
 
 const EMPTY: Overview = { projects: [], products: {}, roots: [], warnings: [] };

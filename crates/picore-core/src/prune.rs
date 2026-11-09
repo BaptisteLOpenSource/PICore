@@ -25,24 +25,30 @@ const REBUILDABLE: [&str; 13] = [
     ".pytest_cache",
 ];
 
+// JSON: `{"verdict":"kept","reason":"changes"}`, documented in README.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "verdict", content = "reason", rename_all = "snake_case")]
 pub enum Verdict {
     Prunable(Reason),
     Kept(Blocker),
+    /// git failed on this Worktree: never removed, reason = the error.
+    Unknown(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Reason {
     Missing,
     Merged,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Blocker {
     Main,
     Detached,
     Locked,
-    Changes(u32),
+    Changes,
     EnvFile,
     IgnoredFiles,
     NotMerged,
@@ -54,20 +60,21 @@ pub enum Blocker {
 pub struct Assessment {
     pub path: PathBuf,
     pub branch: Option<String>,
+    #[serde(flatten)]
     pub verdict: Verdict,
     pub stale: bool,
 }
 
-pub fn assess(p: &Project, wt: &Worktree, cfg: &Config, now: i64) -> Result<Assessment> {
+pub fn assess(p: &Project, wt: &Worktree, cfg: &Config, now: i64) -> Assessment {
     let stale = wt
         .last_commit_at
         .is_some_and(|t| now - t > i64::from(cfg.stale_days) * DAY);
-    Ok(Assessment {
+    Assessment {
         path: wt.path.clone(),
         branch: wt.branch.clone(),
-        verdict: verdict(&p.id.0, wt)?,
+        verdict: verdict(&p.id.0, wt).unwrap_or_else(|e| Verdict::Unknown(e.to_string())),
         stale,
-    })
+    }
 }
 
 fn verdict(repo: &Path, wt: &Worktree) -> Result<Verdict> {
@@ -83,9 +90,8 @@ fn verdict(repo: &Path, wt: &Worktree) -> Result<Verdict> {
     if wt.detached {
         return Ok(Verdict::Kept(Blocker::Detached));
     }
-    let changes = git::status(&wt.path)?.changes;
-    if changes > 0 {
-        return Ok(Verdict::Kept(Blocker::Changes(changes)));
+    if git::status(&wt.path)?.changes > 0 {
+        return Ok(Verdict::Kept(Blocker::Changes));
     }
     let ignored = git::ignored_files(&wt.path)?;
     if ignored.iter().any(|p| git::is_env_file(p)) {
@@ -137,5 +143,6 @@ pub fn remove(p: &Project, a: &Assessment, force: bool) -> Result<()> {
         }
         Verdict::Kept(_) if force => git::remove_worktree(repo, &a.path, true),
         Verdict::Kept(b) => Err(Error::Config(format!("kept: {b:?}"))),
+        Verdict::Unknown(why) => Err(Error::Config(format!("refused: unknown: {why}"))),
     }
 }

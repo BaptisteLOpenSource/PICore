@@ -91,12 +91,22 @@ fn by_path<'a>(projects: &'a [Project], query: &str) -> Resolution<'a> {
         .flat_map(|p| p.worktrees.iter().map(move |w| (p, w)))
         .filter(|(_, w)| path.starts_with(&w.path))
         .max_by_key(|(_, w)| w.path.components().count())
-        .map_or(Resolution::None, |(project, w)| {
-            Resolution::One(Target {
-                project,
-                worktree: Some(w),
-            })
+        .map(|(project, w)| Target {
+            project,
+            worktree: Some(w),
         })
+        // A bare Project's id is its git dir, which no Worktree covers.
+        .or_else(|| {
+            projects
+                .iter()
+                .filter(|p| path.starts_with(&p.id.0))
+                .max_by_key(|p| p.id.0.components().count())
+                .map(|project| Target {
+                    project,
+                    worktree: None,
+                })
+        })
+        .map_or(Resolution::None, Resolution::One)
 }
 
 fn by_name<'a>(projects: &'a [Project], query: &str) -> Resolution<'a> {

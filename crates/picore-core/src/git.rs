@@ -14,7 +14,6 @@ pub struct WorktreeEntry {
     pub bare: bool,
     pub detached: bool,
     pub locked: bool,
-    pub prunable: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -68,7 +67,6 @@ pub fn parse_worktree_list(z: &str) -> Vec<WorktreeEntry> {
                 bare: false,
                 detached: false,
                 locked: false,
-                prunable: false,
             }));
         } else if let Some(w) = cur.as_mut() {
             let (key, val) = field.split_once(' ').unwrap_or((field, ""));
@@ -80,7 +78,6 @@ pub fn parse_worktree_list(z: &str) -> Vec<WorktreeEntry> {
                 "bare" => w.bare = true,
                 "detached" => w.detached = true,
                 "locked" => w.locked = true,
-                "prunable" => w.prunable = true,
                 _ => {}
             }
         }

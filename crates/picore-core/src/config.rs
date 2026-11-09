@@ -82,6 +82,14 @@ impl Config {
         }
     }
 
+    /// A bad config must not hide the Index: defaults, plus why.
+    pub fn load_or_default(path: &Path) -> (Config, Option<Error>) {
+        match Config::load(path) {
+            Ok(c) => (c, None),
+            Err(e) => (Config::default(), Some(e)),
+        }
+    }
+
     fn resolve_products(&mut self) -> Result<()> {
         for (name, product) in self.products.iter_mut() {
             product.resolved = resolve_product_path(name, &product.path)?;

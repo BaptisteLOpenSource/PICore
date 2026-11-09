@@ -6,6 +6,7 @@ use serde::Serialize;
 
 use crate::error::{Error, Result};
 use crate::model::{Project, Worktree};
+use crate::view::ProjectView;
 
 pub const WHITELIST: [&str; 3] = ["README.md", "CLAUDE.md", "AGENTS.md"];
 
@@ -258,7 +259,7 @@ pub fn safe_read(root: &Path, file: &str) -> Result<Option<String>> {
     }
 }
 
-pub fn context(p: &Project) -> Result<ProjectContext> {
+pub fn context(p: &Project, view: &ProjectView) -> Result<ProjectContext> {
     let mut files = Vec::new();
     if let Some(root) = &p.work_tree {
         for name in WHITELIST {
@@ -275,8 +276,8 @@ pub fn context(p: &Project) -> Result<ProjectContext> {
         }
     }
     Ok(ProjectContext {
-        name: p.name.clone(),
-        product: None,
+        name: view.name.clone(),
+        product: view.product.clone(),
         branch: p.branch.clone(),
         techs: p.techs.clone(),
         worktrees: p.worktrees.clone(),

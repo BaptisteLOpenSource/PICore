@@ -5,13 +5,12 @@ import type { Listed, WorktreeHealth } from "./types";
 const project = (name: string, product: string | null): Listed => ({
   id: `/src/${name}`,
   name,
-  work_tree: null,
-  branch: "main",
-  techs: [],
-  worktrees: [],
-  stamp: 0,
   product,
-  health: null,
+  branch: "main",
+  repo: null,
+  techs: [],
+  worktrees: 1,
+  health: { worktrees: [], remote: null },
 });
 
 describe("groupByProduct", () => {
@@ -51,6 +50,7 @@ const row = (dirty: number, ahead: number | null, behind: number | null): Worktr
   ahead,
   behind,
   upstream: ahead === null ? null : "origin/main",
+  error: null,
 });
 
 describe("totals", () => {
@@ -64,5 +64,12 @@ describe("totals", () => {
     const h = { worktrees: [row(0, null, null)], remote: null };
     expect(totals(h)).toEqual({ dirty: 0, ahead: null, behind: null });
     expect(needsAttention(h)).toBe(false);
+  });
+
+  it("counts a worktree error as needing attention, not as dirty", () => {
+    const broken = { ...row(0, null, null), dirty: null, error: "directory missing" };
+    const h = { worktrees: [row(0, null, null), broken], remote: null };
+    expect(totals(h).dirty).toBe(0);
+    expect(needsAttention(h)).toBe(true);
   });
 });

@@ -13,4 +13,5 @@ pub mod refresh;
 pub mod resolve;
 pub mod store;
 pub mod tech;
+pub mod view;
 pub mod wtname;

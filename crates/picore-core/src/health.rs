@@ -28,11 +28,12 @@ pub struct Check {
 pub struct WorktreeHealth {
     pub path: PathBuf,
     pub branch: Option<String>,
-    pub dirty: u32,
-    // None = no upstream, distinct from Some(0) = in sync.
+    // None = unknown (see `error`); ahead/behind None also = no upstream.
+    pub dirty: Option<u32>,
     pub ahead: Option<u32>,
     pub behind: Option<u32>,
     pub upstream: Option<String>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -133,29 +134,36 @@ pub fn machine_health() -> Vec<Check> {
     ]
 }
 
-pub fn project_health(p: &Project, remote: bool) -> Result<ProjectHealth> {
-    // A missing Worktree dir is prune's business, not a health failure.
+pub fn project_health(p: &Project, remote: bool) -> ProjectHealth {
     let worktrees = p
         .worktrees
         .iter()
-        .filter(|w| w.path.is_dir())
         .map(|w| {
-            let s = git::status(&w.path)?;
-            Ok(WorktreeHealth {
+            let mut row = WorktreeHealth {
                 path: w.path.clone(),
                 branch: w.branch.clone(),
-                dirty: s.changes,
-                ahead: s.ahead,
-                behind: s.behind,
-                upstream: s.upstream,
-            })
+                dirty: None,
+                ahead: None,
+                behind: None,
+                upstream: None,
+                error: None,
+            };
+            if !w.path.is_dir() {
+                row.error = Some("directory missing: see `picore prune`".into());
+                return row;
+            }
+            match git::status(&w.path) {
+                Ok(s) => {
+                    row.dirty = Some(s.changes);
+                    (row.ahead, row.behind, row.upstream) = (s.ahead, s.behind, s.upstream);
+                }
+                Err(e) => row.error = Some(e.to_string()),
+            }
+            row
         })
-        .collect::<Result<_>>()?;
-    let remote = remote.then(|| {
-        let dir = p.work_tree.as_deref().unwrap_or(&p.id.0);
-        classify_remote(git::ls_remote(dir))
-    });
-    Ok(ProjectHealth { worktrees, remote })
+        .collect();
+    let remote = remote.then(|| classify_remote(git::ls_remote(p.path())));
+    ProjectHealth { worktrees, remote }
 }
 
 #[cfg(test)]

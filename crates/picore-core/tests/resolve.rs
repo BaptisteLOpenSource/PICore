@@ -94,3 +94,15 @@ fn bare_project_dir_is_first_linked_worktree() {
 fn project_at(git_dir: &std::path::Path) -> Project {
     scan(&ProjectId(git_dir.canonicalize().unwrap())).unwrap()
 }
+
+#[test]
+fn bare_git_dir_path_resolves_to_project() {
+    let r = TestRepo::bare_with_worktree();
+    let ps = [project_at(r.path())];
+    let git_dir = r.path().canonicalize().unwrap();
+    let Resolution::One(t) = resolve(&ps, git_dir.to_str().unwrap()) else {
+        panic!("expected One");
+    };
+    assert_eq!(t.project.id.0, git_dir);
+    assert!(t.worktree.is_none());
+}

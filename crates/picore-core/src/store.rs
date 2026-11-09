@@ -115,28 +115,6 @@ impl Index {
         }))
     }
 
-    pub fn find(&self, path: &Path) -> Result<Option<Project>> {
-        let Ok(path) = path.canonicalize() else {
-            return Ok(None);
-        };
-        // Deepest indexed ancestor wins, so a subdir resolves to its Worktree's Project.
-        for dir in path.ancestors() {
-            let id: Option<String> = self
-                .conn
-                .query_row(
-                    "SELECT id FROM project WHERE id = ?1 OR work_tree = ?1
-                     UNION ALL SELECT project_id FROM worktree WHERE path = ?1 LIMIT 1",
-                    [text(dir)?],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            if let Some(id) = id {
-                return self.get(&ProjectId(PathBuf::from(id)));
-            }
-        }
-        Ok(None)
-    }
-
     pub fn all(&self) -> Result<Vec<Project>> {
         let ids: Vec<String> = self
             .conn
