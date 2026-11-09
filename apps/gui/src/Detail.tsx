@@ -12,7 +12,7 @@ function Copy(props: { text: string; label: string }) {
       type="button"
       class={`${textButton} flex-none`}
       onClick={async () => {
-        await copyText(props.text);
+        if (!(await copyText(props.text))) return;
         setDone(true);
         setTimeout(() => setDone(false), 1500);
       }}

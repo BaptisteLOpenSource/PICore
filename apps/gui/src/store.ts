@@ -110,7 +110,14 @@ export async function checkMachine() {
   }
 }
 
-export const copyText = (text: string) => api.copy(text).catch((e) => setError(String(e)));
+export const copyText = (text: string) =>
+  api.copy(text).then(
+    () => true,
+    (e) => {
+      setError(String(e));
+      return false;
+    },
+  );
 
 export async function chooseFolder(): Promise<string | null> {
   try {
