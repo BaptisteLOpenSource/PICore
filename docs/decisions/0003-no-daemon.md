@@ -15,3 +15,10 @@ skew between processes and concurrent writers.
 - The core exposes one `refresh(project)` entry point used by every component, so a daemon can
   be added later without reshaping the others.
 - Health Check results are never stored: each command re-checks, under a timeout.
+
+## Amendment (#77)
+
+The decision stands; two facts were imprecise. The GUI watches only `config.toml` (and refreshes
+on window focus) while it is open; it never watches Projects. `refresh_all` re-runs discovery
+under the Scan Roots, so a repository cloned there shows up on the next command without
+`picore index`; only `picore index` drops Projects outside the Scan Roots.

@@ -8,8 +8,7 @@ Vocabulary: [GLOSSARY.md](GLOSSARY.md). Decisions: [docs/decisions/](docs/decisi
 PICore/
 ├── crates/picore-core   # library: Index, discovery, health, context. No I/O framework
 ├── crates/picore-cli    # binary `picore` (clap), `mcp` module = MCP over stdio
-├── apps/gui             # V1: Tauri v2 + SolidJS, embeds picore-core
-└── apps/vscode          # V1: VS Code extension, calls `picore --json`
+└── apps/gui             # V1: Tauri v2 + SolidJS, embeds picore-core
 ```
 
 Monorepo rationale: [ADR 0001](docs/decisions/0001-monorepo-cargo-workspace.md).
@@ -18,7 +17,11 @@ Monorepo rationale: [ADR 0001](docs/decisions/0001-monorepo-cargo-workspace.md).
 
 `picore-cli` and `apps/gui` depend on `picore-core`, never on each other. Inside `picore-cli`, only
 `main.rs` reaches the `mcp` module, and `mcp` imports only `picore-core`.
-`apps/vscode` depends on nothing but the `picore` binary and its JSON output.
+
+Every listing goes through `picore_core::view::ProjectView` (CLI `list --json`, MCP `list_projects`,
+GUI overview): one id (the Project path), one display name, one Worktree count. A per-Worktree
+failure (git error, missing directory) is a row value (`error`, `Verdict::Unknown`), never an
+abort of the whole command. JSON shapes: [README](README.md#json-output).
 
 Inside `picore-core`, domain types (Project, Worktree, Health Check, Project Context) know
 nothing about SQLite, processes or the filesystem. Adapters own those:
