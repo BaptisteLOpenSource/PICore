@@ -14,7 +14,7 @@ fn worktree_list_parses_main_and_linked_with_space() {
     r.add_worktree(&wt, "feat");
     let list = git::worktrees(r.path()).unwrap();
     assert_eq!(list.len(), 2);
-    assert_eq!(list[1].path, wt.canonicalize().unwrap());
+    assert_eq!(list[1].path, dunce::canonicalize(&wt).unwrap());
     assert_eq!(list[1].branch.as_deref(), Some("feat"));
 }
 
@@ -136,7 +136,7 @@ fn common_dir_from_linked_worktree_is_shared_git_dir() {
     r.add_worktree(&wt, "feat");
     assert_eq!(
         git::common_dir(&wt).unwrap(),
-        r.path().canonicalize().unwrap()
+        dunce::canonicalize(&r.path()).unwrap()
     );
 }
 

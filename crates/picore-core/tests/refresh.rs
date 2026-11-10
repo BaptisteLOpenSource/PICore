@@ -12,7 +12,7 @@ use support::TestRepo;
 use tempfile::TempDir;
 
 fn repo_id(r: &TestRepo) -> ProjectId {
-    ProjectId(r.path().join(".git").canonicalize().unwrap())
+    ProjectId(dunce::canonicalize(r.path().join(".git")).unwrap())
 }
 
 fn open(dir: &TempDir) -> Index {
@@ -132,7 +132,7 @@ fn bare_layout_has_no_main_work_tree() {
     r.add_worktree(&r.tmp().join("wt"), "feat");
     let db = TempDir::new().unwrap();
     let index = open(&db);
-    let id = ProjectId(r.path().canonicalize().unwrap());
+    let id = ProjectId(dunce::canonicalize(r.path()).unwrap());
     refresh(&index, &id).unwrap();
 
     let project = index.get(&id).unwrap().unwrap();

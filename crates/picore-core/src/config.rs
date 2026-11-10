@@ -76,6 +76,10 @@ impl Config {
                 let mut config: Config =
                     toml::from_str(&text).map_err(|e| Error::Config(e.to_string()))?;
                 config.resolve_products()?;
+                // pre-#86 configs stored verbatim \\?\ roots on Windows
+                for r in &mut config.roots {
+                    *r = dunce::simplified(r).to_path_buf();
+                }
                 Ok(config)
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Config::default()),
@@ -127,7 +131,7 @@ impl Config {
     }
 
     pub fn add_root(&mut self, p: &Path) -> Result<bool> {
-        let canon = p.canonicalize()?;
+        let canon = dunce::canonicalize(p)?;
         if self.roots.contains(&canon) {
             return Ok(false);
         }
@@ -136,7 +140,7 @@ impl Config {
     }
 
     pub fn remove_root(&mut self, p: &Path) -> bool {
-        let p = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+        let p = dunce::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
         let before = self.roots.len();
         self.roots.retain(|r| *r != p);
         self.roots.len() != before
@@ -181,7 +185,7 @@ fn resolve_product_path(name: &str, path: &Path) -> Result<PathBuf> {
             "product {name}: path must be absolute or start with ~/"
         )));
     }
-    Ok(expanded.canonicalize().unwrap_or(expanded))
+    Ok(dunce::canonicalize(&expanded).unwrap_or(expanded))
 }
 
 pub fn editor_command(
@@ -222,6 +226,15 @@ mod tests {
     }
 
     #[test]
+    fn roots_are_plain_paths_and_match_any_spelling() {
+        let d = tempfile::tempdir().unwrap();
+        let mut c = Config::default();
+        c.add_root(d.path()).unwrap();
+        assert!(!c.roots[0].to_string_lossy().starts_with(r"\\?\"));
+        assert!(c.remove_root(&d.path().join(".")));
+    }
+
+    #[test]
     fn editor_precedence_and_split() {
         assert_eq!(
             editor_command(Some("nvim -u custom.lua"), Some("vim"), true).unwrap(),
@@ -254,11 +267,17 @@ mod tests {
         );
         let c = Config::load(&f).unwrap();
         assert_eq!(
-            c.product_of(&a.join("app").canonicalize().unwrap()),
+            c.product_of(&dunce::canonicalize(a.join("app")).unwrap()),
             Some("alpha")
         );
-        assert_eq!(c.product_of(&b.canonicalize().unwrap()), Some("beta"));
-        assert_eq!(c.product_of(&a.canonicalize().unwrap()), Some("alpha"));
+        assert_eq!(
+            c.product_of(&dunce::canonicalize(&b).unwrap()),
+            Some("beta")
+        );
+        assert_eq!(
+            c.product_of(&dunce::canonicalize(&a).unwrap()),
+            Some("alpha")
+        );
         assert_eq!(c.product_of(d.path()), None);
     }
 
@@ -285,7 +304,7 @@ mod tests {
         assert_eq!(c.products.len(), 1);
         let f = d.path().join("config.toml");
         c.save(&f).unwrap();
-        let inner = outer.join("inner").canonicalize().unwrap();
+        let inner = dunce::canonicalize(outer.join("inner")).unwrap();
         assert_eq!(Config::load(&f).unwrap().product_of(&inner), Some("outer"));
         assert!(c.remove_product("outer"));
         assert!(!c.remove_product("outer"));
@@ -344,6 +363,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn symlinked_product_matches_canonical_project_dir() {
         let d = tempfile::tempdir().unwrap();
@@ -357,6 +377,9 @@ mod tests {
             &format!("[products.p]\npath = \"{}\"\n", link.display()),
         );
         let c = Config::load(&f).unwrap();
-        assert_eq!(c.product_of(&project.canonicalize().unwrap()), Some("p"));
+        assert_eq!(
+            c.product_of(&dunce::canonicalize(&project).unwrap()),
+            Some("p")
+        );
     }
 }

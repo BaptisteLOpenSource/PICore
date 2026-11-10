@@ -32,7 +32,10 @@ fn finds_repo_worktree_dedupes_to_one_project() {
     r.add_worktree(&r.tmp().join("wt"), "feat");
     let ids = found(&[r.tmp().to_path_buf()], 4);
     assert_eq!(ids.len(), 1);
-    assert_eq!(ids[0].0, r.path().join(".git").canonicalize().unwrap());
+    assert_eq!(
+        ids[0].0,
+        dunce::canonicalize(&r.path().join(".git")).unwrap()
+    );
 }
 
 #[test]
@@ -58,7 +61,7 @@ fn finds_bare_repo_named_dot_bare() {
     .unwrap();
     let ids = found(&[scan], 4);
     assert_eq!(ids.len(), 1);
-    assert_eq!(ids[0].0, bare.canonicalize().unwrap());
+    assert_eq!(ids[0].0, dunce::canonicalize(&bare).unwrap());
     assert_eq!(project_name(&ids[0]), "x");
 }
 
@@ -71,7 +74,10 @@ fn skips_nested_repo_and_ignore_dirs() {
     init(&scan.join("node_modules/dep"));
     let ids = found(&[scan.to_path_buf()], 4);
     assert_eq!(ids.len(), 1);
-    assert_eq!(ids[0].0, scan.join("repo/.git").canonicalize().unwrap());
+    assert_eq!(
+        ids[0].0,
+        dunce::canonicalize(&scan.join("repo/.git")).unwrap()
+    );
     assert_eq!(project_name(&ids[0]), "repo");
 }
 
@@ -89,7 +95,10 @@ fn skips_submodule() {
     ]);
     let ids = found(&[outer.tmp().to_path_buf()], 4);
     assert_eq!(ids.len(), 1);
-    assert_eq!(ids[0].0, outer.path().join(".git").canonicalize().unwrap());
+    assert_eq!(
+        ids[0].0,
+        dunce::canonicalize(&outer.path().join(".git")).unwrap()
+    );
 }
 
 #[test]
@@ -106,7 +115,10 @@ fn root_itself_is_repo() {
     let r = TestRepo::new();
     let ids = found(&[r.path().to_path_buf()], 4);
     assert_eq!(ids.len(), 1);
-    assert_eq!(ids[0].0, r.path().join(".git").canonicalize().unwrap());
+    assert_eq!(
+        ids[0].0,
+        dunce::canonicalize(&r.path().join(".git")).unwrap()
+    );
 }
 
 #[test]
