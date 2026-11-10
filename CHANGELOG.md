@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Features
+
+- **cli**: Add update subcommand (#63)
+
 ## [0.1.0] - 2026-10-29
 
 ### Features

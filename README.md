@@ -64,11 +64,21 @@ PICore has no telemetry. It sends nothing to its authors.
 
 ## Install
 
-Requires a Rust toolchain (pinned in `rust-toolchain.toml`), `git` >= 2.38, and optionally `gh`.
-From a clone of this repository:
+Requires `git` >= 2.38, and optionally `gh`. From a release (Linux, macOS arm64):
 
 ```sh
-cargo install --path crates/picore-cli    # binary: picore
+curl -LsSf https://github.com/GetPicore/PICore/releases/latest/download/picore-installer.sh | sh
+picore update    # later: fetch the latest release, no-op if up to date
+```
+
+`picore update` only updates a `picore` installed by this installer. The GUI is not updated by
+it: install the `.deb`, `.rpm` or `.AppImage` bundle from the
+[latest release](https://github.com/GetPicore/PICore/releases/latest) again.
+
+From a clone of this repository, with a Rust toolchain (pinned in `rust-toolchain.toml`):
+
+```sh
+cargo install --path crates/picore-cli    # binary: picore, update by rerunning it
 ```
 
 Shell completions (bash, zsh, fish) and a man page are written to stdout:

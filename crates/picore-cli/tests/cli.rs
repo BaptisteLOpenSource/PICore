@@ -518,6 +518,41 @@ fn exit_codes_are_stable() {
     assert_eq!(sb.picore(&["open", "api"]).status.code(), Some(3));
 }
 
+fn update_with_receipts(sb: &Sandbox) -> Output {
+    sb.command()
+        .args(["update", "--json"])
+        .env("AXOUPDATER_CONFIG_PATH", sb.path().join("receipts"))
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn update_without_receipt_fails_cleanly() {
+    let sb = Sandbox::new();
+    let out = update_with_receipts(&sb);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(json(&out)["error"]["code"], "not_installer");
+}
+
+#[test]
+fn update_refuses_binary_outside_receipt_prefix() {
+    let sb = Sandbox::new();
+    let receipts = sb.path().join("receipts");
+    fs::create_dir_all(&receipts).unwrap();
+    let receipt = serde_json::json!({
+        "install_prefix": s(&sb.path().join("elsewhere")),
+        "binaries": ["picore"],
+        "source": {"release_type": "github", "owner": "o", "name": "n", "app_name": "picore"},
+        "version": "0.1.0",
+        "provider": {"source": "cargo-dist", "version": "0.32.0"},
+    });
+    fs::write(receipts.join("picore-receipt.json"), receipt.to_string()).unwrap();
+
+    let out = update_with_receipts(&sb);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(json(&out)["error"]["code"], "not_installer");
+}
+
 #[test]
 fn path_prints_project_dir_and_json() {
     let sb = Sandbox::new();

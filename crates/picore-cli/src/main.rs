@@ -28,6 +28,8 @@ pub enum Cmd {
     Index,
     List,
     Gui,
+    /// Update picore to the latest release
+    Update,
     /// Read-only MCP server over stdio
     Mcp,
     #[command(visible_alias = "o")]

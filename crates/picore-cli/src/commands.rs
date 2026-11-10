@@ -5,6 +5,7 @@ use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
+use axoupdater::AxoUpdater;
 use clap::CommandFactory;
 use clap_complete::Shell;
 use picore_core::config::{Config, Paths, editor_command};
@@ -32,6 +33,7 @@ pub fn run(json: bool, quiet: bool, cmd: &Cmd) -> ExitCode {
         Cmd::Index => index(json, quiet),
         Cmd::List => list(json),
         Cmd::Gui => gui(json),
+        Cmd::Update => update(json),
         Cmd::Open { name } => open(json, name),
         Cmd::Path { query } => path_cmd(json, query),
         Cmd::Info { query } => info_cmd(json, query),
@@ -439,6 +441,56 @@ fn gui(json: bool) -> Result<ExitCode> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()?;
+    Ok(ExitCode::SUCCESS)
+}
+
+#[derive(Serialize)]
+struct UpdateReport {
+    from: String,
+    to: String,
+    updated: bool,
+}
+
+fn update(json: bool) -> Result<ExitCode> {
+    let mut updater = AxoUpdater::new_for("picore");
+    // run() treats a foreign binary as up to date: refuse it explicitly
+    let ours = updater.load_receipt().is_ok()
+        && updater
+            .check_receipt_is_for_this_executable()
+            .unwrap_or(false);
+    if !ours {
+        return Ok(fail(
+            json,
+            "not_installer",
+            "picore was not installed by the release installer: reinstall it the same way",
+            &[],
+        ));
+    }
+    updater.disable_installer_stdout();
+    let from = env!("CARGO_PKG_VERSION").to_owned();
+    let report = match updater.run_sync() {
+        Ok(Some(r)) => UpdateReport {
+            from,
+            to: r.new_version.to_string(),
+            updated: true,
+        },
+        Ok(None) => UpdateReport {
+            to: from.clone(),
+            from,
+            updated: false,
+        },
+        Err(e) => return Ok(fail(json, "update", &e.to_string(), &[])),
+    };
+    if find_on_path(GUI_BIN).is_some() {
+        eprintln!("warn: {GUI_BIN} not updated: install its bundle from the release page");
+    }
+    emit(json, &report, |r| {
+        if r.updated {
+            println!("updated {} -> {}", r.from, r.to);
+        } else {
+            println!("up to date: {}", r.to);
+        }
+    });
     Ok(ExitCode::SUCCESS)
 }
 

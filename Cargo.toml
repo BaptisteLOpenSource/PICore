@@ -11,6 +11,7 @@ repository = "https://github.com/GetPicore/PICore"
 
 [workspace.dependencies]
 clap = { version = "4", features = ["derive"] }
+axoupdater = { version = "0.10", features = ["blocking"] }
 clap_complete = "4"
 clap_mangen = "0.3"
 libc = "0.2"
