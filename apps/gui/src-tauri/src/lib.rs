@@ -313,7 +313,7 @@ mod tests {
         overview(&paths, true).unwrap();
         let ov = overview(&paths, false).unwrap();
         assert_eq!(ov.projects.len(), 3);
-        assert!(ov.roots.contains(&other.canonicalize().unwrap()));
+        assert!(ov.roots.contains(&dunce::canonicalize(&other).unwrap()));
     }
 
     #[test]

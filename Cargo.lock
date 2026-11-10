@@ -2952,6 +2952,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "clap_mangen",
+ "dunce",
  "libc",
  "picore-core",
  "rmcp",
@@ -2967,6 +2968,7 @@ name = "picore-core"
 version = "0.1.0"
 dependencies = [
  "directories",
+ "dunce",
  "libc",
  "rusqlite",
  "serde",
@@ -2982,6 +2984,7 @@ dependencies = [
 name = "picore-gui"
 version = "0.1.0"
 dependencies = [
+ "dunce",
  "notify",
  "picore-core",
  "serde",

@@ -10,7 +10,7 @@ use picore_core::resolve::{Resolution, resolve};
 use support::TestRepo;
 
 fn project(path: &std::path::Path) -> Project {
-    scan(&ProjectId(path.join(".git").canonicalize().unwrap())).unwrap()
+    scan(&ProjectId(dunce::canonicalize(path.join(".git")).unwrap())).unwrap()
 }
 
 #[test]
@@ -25,7 +25,7 @@ fn subdir_of_linked_worktree_resolves_to_it() {
         panic!("expected One");
     };
     let w = t.worktree.unwrap();
-    assert_eq!(w.path, wt.canonicalize().unwrap());
+    assert_eq!(w.path, dunce::canonicalize(&wt).unwrap());
     assert_eq!(w.issue, Some(80));
     let Resolution::One(t) = resolve(&ps, r.path().to_str().unwrap()) else {
         panic!("expected One");
@@ -42,7 +42,7 @@ fn name_at_issue_resolves_linked_worktree() {
     let Resolution::One(t) = resolve(&ps, "repo@80") else {
         panic!("expected One");
     };
-    assert_eq!(t.worktree.unwrap().path, wt.canonicalize().unwrap());
+    assert_eq!(t.worktree.unwrap().path, dunce::canonicalize(&wt).unwrap());
 }
 
 #[test]
@@ -88,18 +88,18 @@ fn bare_project_dir_is_first_linked_worktree() {
     let Resolution::One(t) = resolve(&ps, "bare") else {
         panic!("expected One");
     };
-    assert_eq!(t.dir(), Some(wt.canonicalize().unwrap().as_path()));
+    assert_eq!(t.dir(), Some(dunce::canonicalize(&wt).unwrap().as_path()));
 }
 
 fn project_at(git_dir: &std::path::Path) -> Project {
-    scan(&ProjectId(git_dir.canonicalize().unwrap())).unwrap()
+    scan(&ProjectId(dunce::canonicalize(git_dir).unwrap())).unwrap()
 }
 
 #[test]
 fn bare_git_dir_path_resolves_to_project() {
     let r = TestRepo::bare_with_worktree();
     let ps = [project_at(r.path())];
-    let git_dir = r.path().canonicalize().unwrap();
+    let git_dir = dunce::canonicalize(r.path()).unwrap();
     let Resolution::One(t) = resolve(&ps, git_dir.to_str().unwrap()) else {
         panic!("expected One");
     };

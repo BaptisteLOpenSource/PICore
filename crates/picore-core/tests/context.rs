@@ -40,7 +40,10 @@ fn non_whitelisted_refused() {
 fn context_outlines_whitelisted_files() {
     let r = TestRepo::new();
     r.write("README.md", "# Title\nintro\n## Install\nx\n");
-    let p = scan(&ProjectId(r.path().join(".git").canonicalize().unwrap())).unwrap();
+    let p = scan(&ProjectId(
+        dunce::canonicalize(&r.path().join(".git")).unwrap(),
+    ))
+    .unwrap();
     let ctx = context(&p).unwrap();
     assert_eq!(ctx.files.len(), 1);
     assert_eq!(ctx.files[0].file, "README.md");
@@ -61,7 +64,10 @@ fn bare_project_has_no_files() {
 fn non_utf8_file_is_lossy_not_fatal() {
     let r = TestRepo::new();
     fs::write(r.path().join("README.md"), [0xff, 0xfe, b'#', b' ', b'A']).unwrap();
-    let p = scan(&ProjectId(r.path().join(".git").canonicalize().unwrap())).unwrap();
+    let p = scan(&ProjectId(
+        dunce::canonicalize(&r.path().join(".git")).unwrap(),
+    ))
+    .unwrap();
     let ctx = context(&p).unwrap();
     assert_eq!(ctx.files.len(), 1);
     assert_eq!(ctx.files[0].file, "README.md");
@@ -109,9 +115,12 @@ fn read_capped_at_one_mib() {
 #[test]
 fn context_carries_product_from_config() {
     let r = TestRepo::new();
-    let p = scan(&ProjectId(r.path().join(".git").canonicalize().unwrap())).unwrap();
+    let p = scan(&ProjectId(
+        dunce::canonicalize(&r.path().join(".git")).unwrap(),
+    ))
+    .unwrap();
     let f = r.tmp().join("config.toml");
-    let root = r.tmp().canonicalize().unwrap();
+    let root = dunce::canonicalize(&r.tmp()).unwrap();
     fs::write(
         &f,
         format!("[products.demo]\npath = \"{}\"\n", root.display()),

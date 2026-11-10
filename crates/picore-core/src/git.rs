@@ -239,7 +239,7 @@ pub fn tags(work_tree: &Path, n: usize) -> Result<Vec<String>> {
 
 pub fn common_dir(path: &Path) -> Result<PathBuf> {
     let out = git(path, &["rev-parse", "--git-common-dir"])?;
-    Ok(path.join(out.trim_end_matches('\n')).canonicalize()?)
+    Ok(dunce::canonicalize(path.join(out.trim_end_matches('\n')))?)
 }
 
 pub fn last_commit_at(work_tree: &Path) -> Result<Option<i64>> {

@@ -12,7 +12,10 @@ use support::TestRepo;
 const DAY: i64 = 86_400;
 
 fn project(r: &TestRepo) -> Project {
-    scan(&ProjectId(r.path().join(".git").canonicalize().unwrap())).unwrap()
+    scan(&ProjectId(
+        dunce::canonicalize(r.path().join(".git")).unwrap(),
+    ))
+    .unwrap()
 }
 
 fn linked(p: &Project) -> &picore_core::model::Worktree {
