@@ -27,7 +27,8 @@ impl Paths {
         };
         Ok(Paths {
             config_file: config_dir.join("config.toml"),
-            index_file: data_dir.join("picore.db"),
+            // Per schema: older picore builds still running must not drop our tables.
+            index_file: data_dir.join(format!("picore-v{}.db", crate::store::VERSION)),
         })
     }
 }
@@ -79,6 +80,14 @@ impl Config {
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Config::default()),
             Err(e) => Err(e.into()),
+        }
+    }
+
+    /// A bad config must not hide the Index: defaults, plus why.
+    pub fn load_or_default(path: &Path) -> (Config, Option<Error>) {
+        match Config::load(path) {
+            Ok(c) => (c, None),
+            Err(e) => (Config::default(), Some(e)),
         }
     }
 

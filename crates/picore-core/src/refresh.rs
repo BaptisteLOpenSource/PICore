@@ -7,10 +7,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 
 use crate::config::Config;
-use crate::discovery::discover;
+use crate::discovery::{Known, discover};
 use crate::error::{Error, Result};
 use crate::git;
-use crate::model::{Project, ProjectId, Worktree, project_name};
+use crate::model::{Project, ProjectId, Worktree, issue_of, project_name};
 use crate::store::Index;
 use crate::tech;
 
@@ -44,7 +44,7 @@ enum Step {
 // Root mtime: git deletes an empty `worktrees/` on last `worktree remove`, which only the root sees.
 pub fn stamp(id: &ProjectId) -> Result<i64> {
     let mut acc = fs::metadata(&id.0)?.modified()?;
-    for rel in ["HEAD", "packed-refs", "refs", "worktrees"] {
+    for rel in ["HEAD", "packed-refs", "refs", "worktrees", "config"] {
         acc = newest(&id.0.join(rel), acc)?;
     }
     Ok(acc
@@ -85,10 +85,11 @@ pub fn scan(id: &ProjectId) -> Result<Project> {
             is_main: i == 0,
             // An unborn worktree reports an all-zero HEAD.
             head: e.head.filter(|h| h.bytes().any(|b| b != b'0')),
-            branch: e.branch,
             detached: e.detached,
             locked: e.locked,
             last_commit_at,
+            issue: e.branch.as_deref().and_then(issue_of),
+            branch: e.branch,
             path: e.path,
         });
     }
@@ -101,6 +102,7 @@ pub fn scan(id: &ProjectId) -> Result<Project> {
         name: project_name(id),
         work_tree,
         branch,
+        repo: git::origin_repo(&id.0)?,
         techs,
         worktrees,
         stamp,
@@ -113,23 +115,34 @@ pub fn refresh(index: &Index, id: &ProjectId) -> Result<Outcome> {
     apply(index, id, step)
 }
 
+const WORKERS: usize = 8;
+
 pub fn refresh_many(index: &Index, ids: &[ProjectId]) -> Vec<(ProjectId, Result<Outcome>)> {
     // Index is not Sync: stored stamps are read here, only git work runs in threads.
     let known: Vec<_> = ids
         .iter()
         .map(|id| index.get(id).map(|p| p.map(|p| p.stamp)))
         .collect();
-    let steps: Vec<Result<Step>> = thread::scope(|s| {
-        let handles: Vec<_> = ids
-            .iter()
-            .zip(known)
-            .map(|(id, known)| s.spawn(move || known.and_then(|k| plan(id, k))))
-            .collect();
-        handles
-            .into_iter()
-            .map(|h| h.join().expect("refresh thread panicked"))
-            .collect()
-    });
+    let mut jobs = ids.iter().zip(known);
+    let mut steps: Vec<Result<Step>> = Vec::with_capacity(ids.len());
+    // Bounded: one git process tree per thread, never one thread per Project.
+    loop {
+        let chunk: Vec<_> = jobs.by_ref().take(WORKERS).collect();
+        if chunk.is_empty() {
+            break;
+        }
+        thread::scope(|s| {
+            let handles: Vec<_> = chunk
+                .into_iter()
+                .map(|(id, known)| s.spawn(move || known.and_then(|k| plan(id, k))))
+                .collect();
+            steps.extend(
+                handles
+                    .into_iter()
+                    .map(|h| h.join().expect("refresh thread panicked")),
+            );
+        });
+    }
     ids.iter()
         .zip(steps)
         .map(|(id, step)| (id.clone(), step.and_then(|s| apply(index, id, s))))
@@ -138,8 +151,18 @@ pub fn refresh_many(index: &Index, ids: &[ProjectId]) -> Vec<(ProjectId, Result<
 
 pub type RefreshFailures = Vec<(ProjectId, Error)>;
 
-pub fn refresh_all(index: &Index) -> Result<(Vec<Project>, RefreshFailures)> {
-    let ids: Vec<ProjectId> = index.all()?.into_iter().map(|p| p.id).collect();
+// Discovery adds repos new under a Scan Root; only `index_all` drops Projects.
+pub fn refresh_all(index: &Index, cfg: &Config) -> Result<(Vec<Project>, RefreshFailures)> {
+    let indexed = index.all()?;
+    let mut ids: Vec<ProjectId> = indexed.iter().map(|p| p.id.clone()).collect();
+    ids.extend(discover(
+        &cfg.roots,
+        cfg.max_depth,
+        &cfg.ignore_dirs,
+        &known(&indexed),
+    )?);
+    ids.sort_by(|a, b| a.0.cmp(&b.0));
+    ids.dedup();
     let failed = refresh_many(index, &ids)
         .into_iter()
         .filter_map(|(id, outcome)| outcome.err().map(|e| (id, e)))
@@ -148,7 +171,12 @@ pub fn refresh_all(index: &Index) -> Result<(Vec<Project>, RefreshFailures)> {
 }
 
 pub fn index_all(index: &Index, cfg: &Config) -> Result<IndexReport> {
-    let ids = discover(&cfg.roots, cfg.max_depth, &cfg.ignore_dirs)?;
+    let ids = discover(
+        &cfg.roots,
+        cfg.max_depth,
+        &cfg.ignore_dirs,
+        &known(&index.all()?),
+    )?;
     let mut report = IndexReport {
         found: ids.len(),
         ..IndexReport::default()
@@ -166,6 +194,18 @@ pub fn index_all(index: &Index, cfg: &Config) -> Result<IndexReport> {
     }
     report.removed += index.retain(&ids)?;
     Ok(report)
+}
+
+fn known(indexed: &[Project]) -> Known {
+    indexed
+        .iter()
+        .flat_map(|p| {
+            let dirs = p.worktrees.iter().map(|w| w.path.clone());
+            std::iter::once(p.id.0.clone())
+                .chain(dirs)
+                .map(move |d| (d, p.id.clone()))
+        })
+        .collect()
 }
 
 fn plan(id: &ProjectId, known: Option<i64>) -> Result<Step> {

@@ -64,7 +64,7 @@ PICore has no telemetry. It sends nothing to its authors.
 
 ## Install
 
-Requires `git`, and optionally `gh`. From a release (Linux, macOS arm64):
+Requires `git` >= 2.38, and optionally `gh`. From a release (Linux, macOS arm64):
 
 ```sh
 curl -LsSf https://github.com/GetPicore/PICore/releases/latest/download/picore-installer.sh | sh
@@ -88,8 +88,19 @@ picore completions zsh > ~/.zfunc/_picore
 picore man > picore.1
 ```
 
+`picore path <query>` prints a Project or Worktree directory. `pcd` wraps it in `cd`:
+
+```sh
+picore init fish | source        # fish; zsh/bash: eval "$(picore init zsh)"
+pcd room-booking/backend && claude
+```
+
+`picore wt-name <issue> [project]` prints the canonical branch (`<issue>-<slug>`) and Worktree
+path (`<project>.worktrees/<issue>-<slug>`) from the issue title, fetched with `gh` inside the
+Project. It creates nothing; the project defaults to the current directory.
+
 Config and Index live in XDG paths: `~/.config/picore/config.toml` and
-`~/.local/share/picore/picore.db`. Set `PICORE_CONFIG_DIR` and `PICORE_DATA_DIR` to override.
+`~/.local/share/picore/picore-v<schema>.db` (one file per schema version). Set `PICORE_CONFIG_DIR` and `PICORE_DATA_DIR` to override.
 
 ## Usage
 
@@ -102,12 +113,20 @@ picore root add ~/Documents/Git
 picore index
 # indexed 9 projects: 9 updated, 0 removed
 picore list
-# NAME             PRODUCT  BRANCH         WT  TECHS                             PATH
-# PICore           -        dev            14  -                                 ~/Documents/Git/Config/PICore
+# NAME             PRODUCT  BRANCH         WT  TECHS  REPO                  PATH
+# PICore           -        dev            14  -      BaptisteLeDev/PICore  ~/Documents/Git/Config/PICore
+# (Projects grouped under a `<product>` line, ungrouped last)
+picore info PICore
+# name        PICore
+# path        ~/Documents/Git/Config/PICore
+# repo        BaptisteLeDev/PICore
+# tags        v0.3.0, v0.2.0
+# stars       3   (GitHub fields via gh; `github` is null with a reason if gh fails)
 picore status
 # git: Ok git version 2.56.0
 # ssh-agent: Ok agent has keys
-# PICore: dirty 0 ahead 0 behind 0
+# PICore ~/Documents/Git/Config/PICore: dirty 0 ahead 0 behind 0
+# PICore ~/Documents/Git/Config/PICore.worktrees/76-health: dirty 2 no upstream
 picore worktrees PICore
 # PICore  ~/Documents/Git/Config/PICore  Kept(Main)
 # PICore  ~/Documents/Git/Config/PICore.worktrees/10-name-resolution  Kept(NotMerged)
@@ -116,11 +135,21 @@ picore prune
 # ...one line per Prunable Worktree, omitted
 ```
 
+Commands that take a Project name also accept `name@<issue>` (the Worktree on branch
+`<issue>-...`) and a path (`/`, `~`, `.`) inside a Project or Worktree. `picore open api@80` opens that Worktree.
+
+Every command refreshes the Index first and re-runs discovery, so a repository cloned under a
+Scan Root shows up without `picore index`. `picore index` is still what drops Projects whose
+Scan Root was removed.
+
 `picore gui` launches the `picore-gui` binary from the GUI bundle, detached, and returns at once.
 
-`picore prune --yes` removes only Prunable Worktrees. A kept Worktree (unmerged, local changes) is
-removed only when you name it by path and pass `--force`. Main and locked Worktrees are
-never removed.
+`picore prune --yes` removes only Prunable Worktrees: clean, and whose branch content is already in
+`origin/<default>` or `origin/dev` (merged or squash-merged; fetch first). Ignored files block unless
+they sit under a rebuildable dir (`node_modules`, `target`, `build`, `dist`, `.next`...); `.env*`
+always blocks. A Fresh Worktree (no commit since it was added) is kept. A kept Worktree (unmerged,
+local changes) is removed only when you name it by path and pass `--force`. Main and locked
+Worktrees are never removed.
 
 Scanning runs git inside your repositories. PICore neutralizes fsmonitor, a repo-local `core.sshCommand` and the
 `ext` protocol, but a `filter.*.clean` driver declared through `.gitattributes` and your git config
@@ -133,12 +162,34 @@ Stable from `v0.1.0`: a change to a code below is a breaking change.
 | Code | Meaning | Example |
 |---|---|---|
 | `0` | Success | `picore list` |
-| `1` | Error: git failure, no scan root, refused action, editor failed | `picore index` with no root |
+| `1` | Error: git failure, no scan root, refused action, editor failed, or any failed row in `status`, `worktrees`, `prune` (the full report is still printed) | `picore status` with a deleted Worktree dir |
 | `2` | Usage error | `picore --bogus` |
 | `3` | Ambiguous name, candidates listed | `picore open api` with two `api` Projects |
 | `4` | Not found | `picore open zzz-none` |
 
 `--json` prints the same error as `{"schema":1,"error":{"code","message","candidates"}}` on stdout.
+`code` is one of `git`, `gh`, `config`, `not_found`, `ambiguous`, `io`, `no_roots`, `refused`.
+
+## JSON output
+
+Success is `{"schema":1,"data":...}`. `null` always means unknown, never zero or false.
+
+- `list`: `[{"id","name","product","branch","repo","techs","worktrees"}]`. `id` is the Project path
+  (work tree, else git dir) and is accepted back by every command and MCP tool. `name` is
+  `<parent>/<name>` when two Projects share a name. `worktrees` counts all Worktrees, main included.
+  MCP `list_projects` and the GUI use this same shape.
+- `status`: `{"machine":[Check],"projects":[{"name","path","worktrees":[Row],"remote":Check|null}]}`.
+  A Row is `{"path","branch","dirty","ahead","behind","upstream","error"}`: `ahead`/`behind` are
+  `null` without an upstream; when git fails or the directory is gone, `error` says why and the
+  counts are `null`.
+- `worktrees`: `[{"project","path","branch","verdict","reason","stale"}]`. `prune` wraps the same rows,
+  plus `"removed"` and `"error"`, in `{"dry_run","pruned":[...]}`.
+
+| `verdict` | `reason` |
+|---|---|
+| `prunable` | `missing`, `merged` |
+| `kept` | `main`, `detached`, `locked`, `changes`, `env_file`, `ignored_files`, `not_merged`, `fresh`, `no_default_branch` |
+| `unknown` | the git error; never removed, exit code `1` |
 
 ## MCP
 
@@ -156,9 +207,15 @@ Or in any MCP client config:
 
 Upgrading from `picore-mcp`: the binary is gone. Replace the command with `picore` and the args with `["mcp"]`.
 
-Tools: `list_projects`, `get_project_context`, `get_project_section`, `list_worktrees`,
-`get_health`. Project context is read from `README.md`, `CLAUDE.md` and `AGENTS.md` only.
-Pass the `id` returned by `list_projects` as the `project` argument.
+Tools: `list_projects`, `find_project`, `get_project_context`, `get_project_section`,
+`list_worktrees`, `get_health`, `worktree_name` (`project`, `issue`), `get_repo_info` (`query`).
+`find_project`, `get_repo_info` and `worktree_name.project` take a query: a name, `parent/name`,
+`name@<issue>` (the Worktree on branch `<issue>-...`) or a path inside a Project or Worktree.
+Project context is read from `README.md`, `CLAUDE.md` and `AGENTS.md` only.
+`get_project_context`, `get_project_section`, `list_worktrees` and `get_health` take the `id` returned
+by `list_projects` or `find_project`. Tool results use the JSON shapes above. A failed call returns
+`{"code","message","candidates"}` with the CLI codes. The config is re-read on every call: a broken
+`config.toml` hides products but never stops the server.
 
 ## Documentation
 

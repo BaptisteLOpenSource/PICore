@@ -6,14 +6,14 @@ use std::time::Duration;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::error::{Error, Result};
-use crate::model::{Project, ProjectId, Worktree};
+use crate::model::{Project, ProjectId, Worktree, issue_of};
 
 const SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS project(id TEXT PRIMARY KEY, name TEXT NOT NULL, work_tree TEXT, branch TEXT, techs TEXT NOT NULL, stamp INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS project(id TEXT PRIMARY KEY, name TEXT NOT NULL, work_tree TEXT, branch TEXT, repo TEXT, techs TEXT NOT NULL, stamp INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS worktree(path TEXT NOT NULL, project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE, branch TEXT, head TEXT, is_main INTEGER NOT NULL, detached INTEGER NOT NULL, locked INTEGER NOT NULL, last_commit_at INTEGER, PRIMARY KEY(project_id, path));
 ";
 
-const VERSION: i64 = 2;
+pub const VERSION: i64 = 3;
 
 pub struct Index {
     conn: Connection,
@@ -44,14 +44,15 @@ impl Index {
         let id = text(&p.id.0)?;
         // Techs are plain identifiers, so a comma-joined column avoids a JSON dependency.
         tx.execute(
-            "INSERT INTO project(id, name, work_tree, branch, techs, stamp) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO project(id, name, work_tree, branch, repo, techs, stamp) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(id) DO UPDATE SET name = excluded.name, work_tree = excluded.work_tree,
-             branch = excluded.branch, techs = excluded.techs, stamp = excluded.stamp",
+             branch = excluded.branch, repo = excluded.repo, techs = excluded.techs, stamp = excluded.stamp",
             params![
                 id,
                 p.name,
                 p.work_tree.as_deref().map(text).transpose()?,
                 p.branch,
+                p.repo,
                 p.techs.join(","),
                 p.stamp
             ],
@@ -81,20 +82,21 @@ impl Index {
         let row = self
             .conn
             .query_row(
-                "SELECT name, work_tree, branch, techs, stamp FROM project WHERE id = ?1",
+                "SELECT name, work_tree, branch, repo, techs, stamp FROM project WHERE id = ?1",
                 [text(&id.0)?],
                 |r| {
                     Ok((
                         r.get::<_, String>(0)?,
                         r.get::<_, Option<String>>(1)?,
                         r.get::<_, Option<String>>(2)?,
-                        r.get::<_, String>(3)?,
-                        r.get::<_, i64>(4)?,
+                        r.get::<_, Option<String>>(3)?,
+                        r.get::<_, String>(4)?,
+                        r.get::<_, i64>(5)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((name, work_tree, branch, techs, stamp)) = row else {
+        let Some((name, work_tree, branch, repo, techs, stamp)) = row else {
             return Ok(None);
         };
         Ok(Some(Project {
@@ -102,6 +104,7 @@ impl Index {
             name,
             work_tree: work_tree.map(PathBuf::from),
             branch,
+            repo,
             techs: techs
                 .split(',')
                 .filter(|t| !t.is_empty())
@@ -110,21 +113,6 @@ impl Index {
             worktrees: self.worktrees_of(id)?,
             stamp,
         }))
-    }
-
-    pub fn find(&self, path: &Path) -> Result<Option<Project>> {
-        let Ok(path) = path.canonicalize() else {
-            return Ok(None);
-        };
-        let id: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT id FROM project WHERE id = ?1 OR work_tree = ?1",
-                [text(&path)?],
-                |r| r.get(0),
-            )
-            .optional()?;
-        id.map_or(Ok(None), |id| self.get(&ProjectId(PathBuf::from(id))))
     }
 
     pub fn all(&self) -> Result<Vec<Project>> {
@@ -168,9 +156,11 @@ impl Index {
              FROM worktree WHERE project_id = ?1 ORDER BY is_main DESC, path",
         )?;
         let rows = stmt.query_map([text(&id.0)?], |r| {
+            let branch: Option<String> = r.get(1)?;
             Ok(Worktree {
                 path: PathBuf::from(r.get::<_, String>(0)?),
-                branch: r.get(1)?,
+                issue: branch.as_deref().and_then(issue_of),
+                branch,
                 head: r.get(2)?,
                 is_main: r.get(3)?,
                 detached: r.get(4)?,

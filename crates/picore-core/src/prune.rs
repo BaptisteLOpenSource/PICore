@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
@@ -9,29 +10,50 @@ use crate::model::{Project, Worktree};
 
 const DAY: i64 = 86_400;
 // Not Config ignore_dirs: a discovery setting must not widen deletion.
-const REBUILDABLE: [&str; 3] = ["node_modules", "target", ".venv"];
+const REBUILDABLE: [&str; 13] = [
+    "node_modules",
+    "target",
+    ".venv",
+    ".next",
+    "build",
+    "dist",
+    "out",
+    ".gradle",
+    "coverage",
+    "__pycache__",
+    ".turbo",
+    ".cache",
+    ".pytest_cache",
+];
 
+// JSON: `{"verdict":"kept","reason":"changes"}`, documented in README.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "verdict", content = "reason", rename_all = "snake_case")]
 pub enum Verdict {
     Prunable(Reason),
     Kept(Blocker),
+    /// git failed on this Worktree: never removed, reason = the error.
+    Unknown(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Reason {
     Missing,
     Merged,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Blocker {
     Main,
     Detached,
     Locked,
-    Changes(u32),
+    Changes,
     EnvFile,
     IgnoredFiles,
     NotMerged,
+    Fresh,
     NoDefaultBranch,
 }
 
@@ -39,20 +61,32 @@ pub enum Blocker {
 pub struct Assessment {
     pub path: PathBuf,
     pub branch: Option<String>,
+    #[serde(flatten)]
     pub verdict: Verdict,
     pub stale: bool,
 }
 
-pub fn assess(p: &Project, wt: &Worktree, cfg: &Config, now: i64) -> Result<Assessment> {
+pub fn assess(p: &Project, wt: &Worktree, cfg: &Config, now: i64) -> Assessment {
     let stale = wt
         .last_commit_at
         .is_some_and(|t| now - t > i64::from(cfg.stale_days) * DAY);
-    Ok(Assessment {
+    Assessment {
         path: wt.path.clone(),
         branch: wt.branch.clone(),
-        verdict: verdict(&p.id.0, wt)?,
+        verdict: verdict(&p.id.0, wt).unwrap_or_else(|e| Verdict::Unknown(e.to_string())),
         stale,
-    })
+    }
+}
+
+/// Every Worktree of `p`, main included, assessed now.
+pub fn assess_project(p: &Project, cfg: &Config) -> Vec<Assessment> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    p.worktrees
+        .iter()
+        .map(|wt| assess(p, wt, cfg, now))
+        .collect()
 }
 
 fn verdict(repo: &Path, wt: &Worktree) -> Result<Verdict> {
@@ -68,20 +102,24 @@ fn verdict(repo: &Path, wt: &Worktree) -> Result<Verdict> {
     if wt.detached {
         return Ok(Verdict::Kept(Blocker::Detached));
     }
-    let changes = git::status(&wt.path)?.changes;
-    if changes > 0 {
-        return Ok(Verdict::Kept(Blocker::Changes(changes)));
+    if git::status(&wt.path)?.changes > 0 {
+        return Ok(Verdict::Kept(Blocker::Changes));
     }
     let ignored = git::ignored_files(&wt.path)?;
     if ignored.iter().any(|p| git::is_env_file(p)) {
         return Ok(Verdict::Kept(Blocker::EnvFile));
     }
+    // Any enclosing dir counts: build output nests (android/app/build).
+    // ls-files lists a nested repo as its dir: its commits are not rebuildable.
     let blocking = ignored.iter().any(|p| {
-        let first = p
-            .strip_prefix(&wt.path)
-            .ok()
-            .and_then(|r| r.components().next());
-        !first.is_some_and(|c| REBUILDABLE.iter().any(|d| c.as_os_str() == *d))
+        if p.join(".git").symlink_metadata().is_ok() {
+            return true;
+        }
+        let dirs = p.strip_prefix(&wt.path).ok().and_then(Path::parent);
+        !dirs.is_some_and(|d| {
+            d.components()
+                .any(|c| REBUILDABLE.iter().any(|r| c.as_os_str() == *r))
+        })
     });
     if blocking {
         return Ok(Verdict::Kept(Blocker::IgnoredFiles));
@@ -90,14 +128,24 @@ fn verdict(repo: &Path, wt: &Worktree) -> Result<Verdict> {
         return Ok(Verdict::Kept(Blocker::NoDefaultBranch));
     };
     // Unborn worktree has no tip: nothing to merge, so it stays.
-    let merged = match wt.head.as_deref() {
-        Some(head) => git::is_strict_ancestor(repo, head, &default)?,
-        None => false,
+    let Some(head) = wt.head.as_deref() else {
+        return Ok(Verdict::Kept(Blocker::NotMerged));
     };
-    Ok(if merged {
-        Verdict::Prunable(Reason::Merged)
+    // PRs land in dev before a release reaches the default branch.
+    let dev = git::remote_branch(repo, "dev")?;
+    let mut merged = false;
+    for target in [Some(default), dev].into_iter().flatten() {
+        merged = merged || git::is_merged(repo, head, &target)?;
+    }
+    if !merged {
+        return Ok(Verdict::Kept(Blocker::NotMerged));
+    }
+    // Tip older than the Worktree: no own commit, e.g. a new workspace on a stale base.
+    let created = git::created_at(&wt.path)?;
+    Ok(if wt.last_commit_at.is_none_or(|t| t < created) {
+        Verdict::Kept(Blocker::Fresh)
     } else {
-        Verdict::Kept(Blocker::NotMerged)
+        Verdict::Prunable(Reason::Merged)
     })
 }
 
@@ -111,5 +159,6 @@ pub fn remove(p: &Project, a: &Assessment, force: bool) -> Result<()> {
         }
         Verdict::Kept(_) if force => git::remove_worktree(repo, &a.path, true),
         Verdict::Kept(b) => Err(Error::Config(format!("kept: {b:?}"))),
+        Verdict::Unknown(why) => Err(Error::Config(format!("refused: unknown: {why}"))),
     }
 }

@@ -1,12 +1,8 @@
 import { For } from "solid-js";
+import { Remove } from "./Remove";
 import { button } from "./ui";
-import { addRoot, chooseFolder, deleteRoot, overview } from "./store";
-
-function confirmDelete(path: string) {
-  if (confirm(`Remove scan root ${path}? Its projects leave the index, folders are untouched.`)) {
-    void deleteRoot(path);
-  }
-}
+import { addRoot, chooseFolder, deleteRoot, home, overview } from "./store";
+import { shortPath } from "./format";
 
 async function pickRoot() {
   const folder = await chooseFolder();
@@ -15,23 +11,24 @@ async function pickRoot() {
 
 export function Roots() {
   return (
-    <section aria-label="Scan roots" class="flex flex-col gap-2 border-t border-muted/30 pt-4">
-      <header class="flex items-center justify-between gap-2">
-        <h2 class="font-semibold">Scan roots</h2>
+    <>
+      <ul class="flex flex-col divide-y divide-rule">
+        <For each={overview().roots} fallback={<li class="text-[13px] text-muted">No scan root.</li>}>
+          {(root) => (
+            <li class="flex min-h-[44px] items-center justify-between gap-4 py-2">
+              <span class="min-w-0 truncate font-mono text-[12px]" title={root}>
+                {shortPath(root, home())}
+              </span>
+              <Remove what={root} onConfirm={() => void deleteRoot(root)} />
+            </li>
+          )}
+        </For>
+      </ul>
+      <div>
         <button type="button" class={button} onClick={pickRoot}>
           Add root
         </button>
-      </header>
-      <For each={overview().roots} fallback={<p class="text-sm text-muted">No scan root.</p>}>
-        {(root) => (
-          <div class="flex min-w-0 items-center justify-between gap-2">
-            <span class="truncate font-mono text-xs">{root}</span>
-            <button type="button" class={button} onClick={() => confirmDelete(root)}>
-              Remove
-            </button>
-          </div>
-        )}
-      </For>
-    </section>
+      </div>
+    </>
   );
 }

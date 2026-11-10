@@ -13,6 +13,7 @@ name = "picore_gui"
 picore-core = { path = "../../../crates/picore-core" }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
+tauri-plugin-clipboard-manager = "2"
 notify = "8"
 serde.workspace = true
 

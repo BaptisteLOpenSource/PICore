@@ -36,6 +36,24 @@ pub enum Cmd {
     Open {
         name: String,
     },
+    /// Print the directory of a Project or Worktree
+    Path {
+        query: String,
+    },
+    /// Print the canonical branch and Worktree path for an issue (writes nothing)
+    WtName {
+        issue: u32,
+        /// Project query, default: current directory
+        project: Option<String>,
+    },
+    /// Name, path, branch, tags and GitHub metadata of a Project or Worktree
+    Info {
+        query: String,
+    },
+    /// Print shell function `pcd` (cd to a Project or Worktree)
+    Init {
+        shell: InitShell,
+    },
     Status {
         name: Option<String>,
         #[arg(long)]
@@ -57,6 +75,13 @@ pub enum Cmd {
     },
     #[command(hide = true)]
     Man,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum InitShell {
+    Fish,
+    Zsh,
+    Bash,
 }
 
 #[derive(Subcommand)]
