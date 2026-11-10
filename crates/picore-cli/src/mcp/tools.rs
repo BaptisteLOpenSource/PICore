@@ -1,0 +1,418 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+use picore_core::config::{Config, Paths};
+use picore_core::context::{self, ProjectContext, Section, WHITELIST};
+use picore_core::error::{Error, Result};
+use picore_core::health::{Check, ProjectHealth, Status, machine_health, project_health};
+use picore_core::info::{self, Info};
+use picore_core::model::{Project, ProjectId, project_dir};
+use picore_core::prune::{self, Assessment};
+use picore_core::refresh::{refresh, refresh_all};
+use picore_core::resolve::{Resolution, is_path, qualified, resolve};
+use picore_core::store::Index;
+use picore_core::view;
+use picore_core::wtname;
+use serde_json::{Value, json};
+
+const REMOTE_NOT_CHECKED: &str =
+    "not checked: MCP never touches the network, run `picore status --remote`";
+
+const HEALTH_TTL: Duration = Duration::from_secs(10);
+
+pub struct Server {
+    index: Mutex<Index>,
+    config_file: PathBuf,
+    health_cache: Mutex<HashMap<ProjectId, (Instant, ProjectHealth)>>,
+}
+
+impl Server {
+    pub fn open(paths: &Paths) -> Result<Server> {
+        Ok(Server {
+            index: Mutex::new(Index::open(&paths.index_file)?),
+            config_file: paths.config_file.clone(),
+            health_cache: Mutex::default(),
+        })
+    }
+
+    // Per call, lenient: an edit shows up at once, a bad file never stops the server.
+    fn cfg(&self) -> Config {
+        let (cfg, bad) = Config::load_or_default(&self.config_file);
+        if let Some(e) = bad {
+            eprintln!("warn: {e}: products hidden");
+        }
+        cfg
+    }
+
+    fn refreshed(&self, cfg: &Config) -> Result<Vec<Project>> {
+        let (projects, failed) = refresh_all(&self.index.lock().unwrap(), cfg)?;
+        for (id, e) in failed {
+            eprintln!("warn: {}: {e}", id.0.display());
+        }
+        Ok(projects)
+    }
+
+    /// Refreshes only the Project `query` resolves to; returns it with all indexed Projects.
+    fn lookup(&self, query: &str) -> Result<(Project, Vec<Project>)> {
+        let index = self.index.lock().unwrap();
+        let all = index.all()?;
+        // An id is exact: a path inside the Project, or its full display name. No fuzzy name.
+        let found = if is_path(query) {
+            resolve(&all, query).into_target(query)?.project
+        } else {
+            let names = view::list(&all, &Config::default());
+            let hit = all.iter().zip(names).find(|(_, v)| v.name == query);
+            hit.ok_or_else(|| Error::NotFound(query.into()))?.0
+        };
+        let id = found.id.clone();
+        refresh(&index, &id)?;
+        let p = index
+            .get(&id)?
+            .ok_or_else(|| Error::NotFound(query.into()))?;
+        Ok((p, all))
+    }
+
+    pub fn worktree_name(&self, query: &str, issue: u32) -> Result<Value> {
+        let projects = self.refreshed(&self.cfg())?;
+        let p = resolve(&projects, query).into_target(query)?.project;
+        Ok(json!(wtname::for_issue(project_dir(&p.id), issue)?))
+    }
+
+    pub fn get_repo_info(&self, query: &str) -> Result<Info> {
+        let cfg = self.cfg();
+        let projects = self.refreshed(&cfg)?;
+        let t = resolve(&projects, query).into_target(query)?;
+        info::info(&t, cfg.product_of(project_dir(&t.project.id)))
+    }
+
+    pub fn list_projects(&self) -> Result<Value> {
+        let cfg = self.cfg();
+        let projects = self.refreshed(&cfg)?;
+        if projects.is_empty() {
+            return Ok(json!({"projects": [], "hint": "run picore index"}));
+        }
+        Ok(json!({"projects": view::list(&projects, &cfg)}))
+    }
+
+    pub fn find_project(&self, query: &str) -> Result<Value> {
+        let cfg = self.cfg();
+        let projects = self.refreshed(&cfg)?;
+        let t = match resolve(&projects, query) {
+            Resolution::One(t) => t,
+            Resolution::Many(hits) => {
+                let names: Vec<String> = hits.into_iter().map(qualified).collect();
+                return Ok(json!({"candidates": names}));
+            }
+            Resolution::None => return Err(Error::NotFound(query.into())),
+        };
+        let p = t.project;
+        let dir = t.dir().unwrap_or_else(|| project_dir(&p.id));
+        let files: Vec<_> = WHITELIST
+            .iter()
+            .map(|f| dir.join(f))
+            .filter(|f| f.symlink_metadata().is_ok_and(|m| m.is_file()))
+            .collect();
+        let row = |w: &picore_core::model::Worktree| json!({"path": w.path, "branch": w.branch, "issue": w.issue});
+        let v = view::of(p, &projects, &cfg);
+        Ok(json!({
+            "id": v.id, "name": v.name, "product": v.product, "path": dir, "repo": v.repo,
+            "worktree": t.worktree.map(row),
+            "worktrees": p.worktrees.iter().map(row).collect::<Vec<_>>(),
+            "files": files,
+        }))
+    }
+
+    pub fn get_project_context(&self, project: &str) -> Result<ProjectContext> {
+        let (p, all) = self.lookup(project)?;
+        context::context(&p, &view::of(&p, &all, &self.cfg()))
+    }
+
+    pub fn get_project_section(&self, project: &str, file: &str, heading: &str) -> Result<Section> {
+        context::section(&self.lookup(project)?.0, file, heading)
+    }
+
+    pub fn list_worktrees(&self, project: &str) -> Result<Vec<Assessment>> {
+        let (p, _) = self.lookup(project)?;
+        Ok(prune::assess_project(&p, &self.cfg()))
+    }
+
+    pub fn get_health(&self, project: Option<&str>) -> Result<Value> {
+        let project = project.map(|q| self.project_health_cached(q)).transpose()?;
+        Ok(json!({"machine": machine_health(), "project": project}))
+    }
+
+    fn project_health_cached(&self, query: &str) -> Result<ProjectHealth> {
+        let (p, _) = self.lookup(query)?;
+        let mut cache = self.health_cache.lock().unwrap();
+        if let Some((_, h)) = cache.get(&p.id).filter(|(at, _)| at.elapsed() < HEALTH_TTL) {
+            return Ok(h.clone());
+        }
+        let mut h = project_health(&p, false);
+        h.remote = Some(Check {
+            name: "remote".into(),
+            status: Status::Unknown,
+            message: REMOTE_NOT_CHECKED.into(),
+            hint: None,
+        });
+        cache.insert(p.id, (Instant::now(), h.clone()));
+        Ok(h)
+    }
+}
+
+#[cfg(test)]
+#[allow(dead_code)] // shared helpers, not all used here
+#[path = "../../../picore-core/tests/support/mod.rs"]
+mod support;
+
+#[cfg(test)]
+mod tests {
+    use std::process::Command;
+
+    use picore_core::refresh::scan;
+    use tempfile::TempDir;
+
+    use super::*;
+
+    fn server(dir: &TempDir) -> Server {
+        let paths = Paths {
+            config_file: dir.path().join("config.toml"),
+            index_file: dir.path().join("index.db"),
+        };
+        Server::open(&paths).unwrap()
+    }
+
+    fn git_project(dir: &TempDir, s: &Server) -> (String, ProjectId) {
+        let repo = dir.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        let ok = Command::new("git")
+            .args(["init", "-q", "-b", "main"])
+            .arg(&repo)
+            .status()
+            .unwrap();
+        assert!(ok.success());
+        let id = ProjectId(std::fs::canonicalize(repo.join(".git")).unwrap());
+        s.index.lock().unwrap().upsert(&scan(&id).unwrap()).unwrap();
+        (id.0.display().to_string(), id)
+    }
+
+    #[test]
+    fn unknown_project_is_not_found() {
+        let dir = TempDir::new().unwrap();
+        let s = server(&dir);
+        assert!(matches!(s.lookup("/tmp/nope"), Err(Error::NotFound(_))));
+    }
+
+    #[test]
+    fn lookup_by_git_dir_or_work_tree() {
+        let dir = TempDir::new().unwrap();
+        let s = server(&dir);
+        let (git_dir, id) = git_project(&dir, &s);
+        assert_eq!(s.lookup(&git_dir).unwrap().0.id, id);
+        let work_tree = dir.path().join("repo");
+        assert_eq!(s.lookup(work_tree.to_str().unwrap()).unwrap().0.id, id);
+    }
+
+    #[test]
+    fn find_project_by_name_and_path() {
+        let dir = TempDir::new().unwrap();
+        let s = server(&dir);
+        let (_, id) = git_project(&dir, &s);
+        let root = id.0.parent().unwrap();
+        std::fs::write(root.join("README.md"), "# r").unwrap();
+        let v = s.find_project("repo").unwrap();
+        assert_eq!(v["path"], json!(root));
+        assert_eq!(v["id"], json!(root));
+        assert_eq!(v["id"], s.list_projects().unwrap()["projects"][0]["id"]);
+        assert_eq!(v["files"], json!([root.join("README.md")]));
+        assert_eq!(v["worktree"], Value::Null);
+        let v = s.find_project(root.to_str().unwrap()).unwrap();
+        assert_eq!(v["name"], "repo");
+        assert_eq!(v["worktree"]["branch"], "main");
+        assert!(matches!(s.find_project("zzz"), Err(Error::NotFound(_))));
+    }
+
+    #[test]
+    fn lookup_by_linked_worktree_path() {
+        let dir = TempDir::new().unwrap();
+        let s = server(&dir);
+        let (_, id) = git_project(&dir, &s);
+        let repo = dir.path().join("repo");
+        let wt = dir.path().join("wt");
+        support::commit_in(&repo, "i", None);
+        let git = |args: &[&str]| {
+            let out = Command::new("git").current_dir(&repo).args(args).output();
+            String::from_utf8(out.unwrap().stdout).unwrap()
+        };
+        git(&["worktree", "add", "-q", "-b", "feat", wt.to_str().unwrap()]);
+        s.index.lock().unwrap().upsert(&scan(&id).unwrap()).unwrap();
+        assert_eq!(s.lookup(wt.to_str().unwrap()).unwrap().0.id, id);
+        let rows = s.list_worktrees(wt.to_str().unwrap()).unwrap();
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
+    fn list_projects_counts_main_worktree_and_id_is_work_tree() {
+        let dir = TempDir::new().unwrap();
+        let s = server(&dir);
+        git_project(&dir, &s);
+        let v = s.list_projects().unwrap();
+        assert_eq!(v["projects"][0]["worktrees"], 1);
+        let id = v["projects"][0]["id"].as_str().unwrap();
+        assert_eq!(
+            std::path::Path::new(id),
+            dir.path().join("repo").canonicalize().unwrap()
+        );
+        let id = id.to_owned();
+        s.get_project_context(&id).unwrap();
+        if let Err(e) = s.get_project_section(&id, "README.md", "x") {
+            assert!(!matches!(&e, Error::NotFound(m) if *m == id), "{e}");
+        }
+        assert_eq!(s.list_worktrees(&id).unwrap().len(), 1);
+        let h = s.get_health(Some(&id)).unwrap();
+        assert_eq!(h["project"]["remote"]["status"], "unknown");
+        assert!(
+            h["project"]["remote"]["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("not checked")
+        );
+    }
+
+    #[test]
+    fn duplicate_names_are_qualified_by_parent() {
+        let dir = TempDir::new().unwrap();
+        let s = server(&dir);
+        for parent in ["a", "b"] {
+            let repo = dir.path().join(parent).join("core");
+            std::fs::create_dir_all(&repo).unwrap();
+            Command::new("git")
+                .args(["init", "-q"])
+                .arg(&repo)
+                .status()
+                .unwrap();
+            let id = ProjectId(std::fs::canonicalize(repo.join(".git")).unwrap());
+            s.index.lock().unwrap().upsert(&scan(&id).unwrap()).unwrap();
+        }
+        let v = s.list_projects().unwrap();
+        let mut names: Vec<&str> = v["projects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["name"].as_str().unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["a/core", "b/core"]);
+    }
+
+    #[test]
+    fn product_exposed_in_list_and_context() {
+        let dir = TempDir::new().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::write(
+            dir.path().join("config.toml"),
+            format!("[products.demo]\npath = \"{}\"\n", root.display()),
+        )
+        .unwrap();
+        let s = server(&dir);
+        let (path, _) = git_project(&dir, &s);
+        assert_eq!(s.list_projects().unwrap()["projects"][0]["product"], "demo");
+        assert_eq!(
+            s.get_project_context(&path).unwrap().product.as_deref(),
+            Some("demo")
+        );
+    }
+
+    #[test]
+    fn health_cached_ten_seconds() {
+        let dir = TempDir::new().unwrap();
+        let s = server(&dir);
+        let (path, id) = git_project(&dir, &s);
+        s.get_health(Some(&path)).unwrap();
+        let first = s.health_cache.lock().unwrap()[&id].0;
+        s.get_health(Some(&path)).unwrap();
+        assert_eq!(s.health_cache.lock().unwrap()[&id].0, first);
+    }
+
+    #[test]
+    fn bad_config_does_not_stop_the_server() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("config.toml"), "roots = 3").unwrap();
+        let s = server(&dir);
+        let (path, _) = git_project(&dir, &s);
+        assert_eq!(s.list_projects().unwrap()["projects"][0]["name"], "repo");
+        assert!(s.get_health(Some(&path)).is_ok());
+    }
+
+    #[test]
+    fn config_edit_seen_without_restart() {
+        let dir = TempDir::new().unwrap();
+        let s = server(&dir);
+        git_project(&dir, &s);
+        assert!(s.list_projects().unwrap()["projects"][0]["product"].is_null());
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::write(
+            dir.path().join("config.toml"),
+            format!("[products.demo]\npath = \"{}\"\n", root.display()),
+        )
+        .unwrap();
+        assert_eq!(s.list_projects().unwrap()["projects"][0]["product"], "demo");
+    }
+
+    #[test]
+    fn bare_project_id_is_accepted_back() {
+        let dir = TempDir::new().unwrap();
+        let s = server(&dir);
+        let bare = dir.path().join("b.git");
+        let ok = Command::new("git")
+            .args(["init", "-q", "--bare"])
+            .arg(&bare)
+            .status()
+            .unwrap();
+        assert!(ok.success());
+        let id = ProjectId(std::fs::canonicalize(&bare).unwrap());
+        s.index.lock().unwrap().upsert(&scan(&id).unwrap()).unwrap();
+        let listed = s.list_projects().unwrap();
+        let pid = listed["projects"][0]["id"].as_str().unwrap().to_owned();
+        assert_eq!(s.lookup(&pid).unwrap().0.id, id);
+    }
+
+    fn init_at(s: &Server, repo: &std::path::Path) -> ProjectId {
+        std::fs::create_dir_all(repo).unwrap();
+        let ok = Command::new("git")
+            .args(["init", "-q"])
+            .arg(repo)
+            .status()
+            .unwrap();
+        assert!(ok.success());
+        let id = ProjectId(std::fs::canonicalize(repo.join(".git")).unwrap());
+        s.index.lock().unwrap().upsert(&scan(&id).unwrap()).unwrap();
+        id
+    }
+
+    #[test]
+    fn project_id_never_matches_by_substring_or_prefix() {
+        let dir = TempDir::new().unwrap();
+        let s = server(&dir);
+        let id = init_at(&s, &dir.path().join("apple"));
+        assert_eq!(s.lookup("apple").unwrap().0.id, id);
+        for q in ["appl", "pple"] {
+            assert!(matches!(s.lookup(q), Err(Error::NotFound(_))), "{q}");
+        }
+        let prefix = dir.path().join("app");
+        assert!(matches!(
+            s.lookup(prefix.to_str().unwrap()),
+            Err(Error::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn find_project_name_is_qualified_like_list_projects() {
+        let dir = TempDir::new().unwrap();
+        let s = server(&dir);
+        init_at(&s, &dir.path().join("a/core"));
+        init_at(&s, &dir.path().join("b/core"));
+        assert_eq!(s.find_project("a/core").unwrap()["name"], "a/core");
+    }
+}

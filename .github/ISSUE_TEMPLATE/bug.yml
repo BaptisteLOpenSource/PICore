@@ -1,0 +1,39 @@
+name: Bug report
+description: Something PICore does wrong
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran and what you got.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. picore root add ~/Projects
+        2. picore index
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: PICore version or commit
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and git version
+      placeholder: Linux, git 2.56.0
+    validations:
+      required: true
