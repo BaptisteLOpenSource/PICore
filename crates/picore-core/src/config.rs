@@ -80,6 +80,8 @@ impl Config {
                 for r in &mut config.roots {
                     *r = dunce::simplified(r).to_path_buf();
                 }
+                config.roots.sort();
+                config.roots.dedup();
                 Ok(config)
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Config::default()),
@@ -232,6 +234,19 @@ mod tests {
         c.add_root(d.path()).unwrap();
         assert!(!c.roots[0].to_string_lossy().starts_with(r"\\?\"));
         assert!(c.remove_root(&d.path().join(".")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn legacy_verbatim_roots_load_plain_and_deduped() {
+        let d = tempfile::tempdir().unwrap();
+        let f = write_config(
+            d.path(),
+            r"roots = ['\\?\C:\code', 'C:\code']
+",
+        );
+        let c = Config::load(&f).unwrap();
+        assert_eq!(c.roots, [PathBuf::from(r"C:\code")]);
     }
 
     #[test]
