@@ -341,6 +341,48 @@ fn prune_dry_run_shows_reason() {
 }
 
 #[test]
+fn prune_removes_empty_worktrees_container_only() {
+    let sb = Sandbox::new();
+    let a = sb.repo("code/a");
+    commit(&a, "one");
+    let container = sb.path().join("code/a.worktrees");
+    let wt = container.join("merged");
+    git(
+        &a,
+        &["worktree", "add", "-q", "-b", "merged", s(&wt), "main"],
+    );
+    commit(&wt, "merged work");
+    git(&a, &["merge", "-q", "--ff-only", "merged"]);
+    commit(&a, "two");
+    let b = sb.repo("code/b");
+    commit(&b, "one");
+    let busy = sb.path().join("code/b.worktrees");
+    fs::create_dir(&busy).unwrap();
+    fs::write(busy.join("notes.txt"), "x").unwrap();
+    add_code_root(&sb);
+
+    let out = sb.picore(&["--json", "prune"]);
+    assert_eq!(json(&out)["data"]["containers"], serde_json::json!([]));
+    assert!(container.is_dir());
+
+    let out = sb.picore(&["--json", "prune", "--yes"]);
+    assert!(out.status.success());
+    let containers = json(&out)["data"]["containers"].clone();
+    let listed: Vec<&str> = containers
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c.as_str())
+        .collect();
+    assert!(
+        matches!(listed[..], [one] if one.ends_with("a.worktrees")),
+        "{listed:?}"
+    );
+    assert!(!container.exists());
+    assert!(busy.join("notes.txt").is_file());
+}
+
+#[test]
 fn prune_yes_removes_merged_only() {
     let sb = Sandbox::new();
     let (merged, dirty) = merged_and_dirty(&sb);
