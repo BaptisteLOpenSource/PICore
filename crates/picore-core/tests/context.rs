@@ -41,7 +41,7 @@ fn context_outlines_whitelisted_files() {
     let r = TestRepo::new();
     r.write("README.md", "# Title\nintro\n## Install\nx\n");
     let p = scan(&ProjectId(
-        dunce::canonicalize(&r.path().join(".git")).unwrap(),
+        dunce::canonicalize(r.path().join(".git")).unwrap(),
     ))
     .unwrap();
     let ctx = context(&p).unwrap();
@@ -65,7 +65,7 @@ fn non_utf8_file_is_lossy_not_fatal() {
     let r = TestRepo::new();
     fs::write(r.path().join("README.md"), [0xff, 0xfe, b'#', b' ', b'A']).unwrap();
     let p = scan(&ProjectId(
-        dunce::canonicalize(&r.path().join(".git")).unwrap(),
+        dunce::canonicalize(r.path().join(".git")).unwrap(),
     ))
     .unwrap();
     let ctx = context(&p).unwrap();
@@ -116,7 +116,7 @@ fn read_capped_at_one_mib() {
 fn context_carries_product_from_config() {
     let r = TestRepo::new();
     let p = scan(&ProjectId(
-        dunce::canonicalize(&r.path().join(".git")).unwrap(),
+        dunce::canonicalize(r.path().join(".git")).unwrap(),
     ))
     .unwrap();
     let f = r.tmp().join("config.toml");

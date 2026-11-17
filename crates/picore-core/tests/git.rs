@@ -136,7 +136,7 @@ fn common_dir_from_linked_worktree_is_shared_git_dir() {
     r.add_worktree(&wt, "feat");
     assert_eq!(
         git::common_dir(&wt).unwrap(),
-        dunce::canonicalize(&r.path()).unwrap()
+        dunce::canonicalize(r.path()).unwrap()
     );
 }
 
