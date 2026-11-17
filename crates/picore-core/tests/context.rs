@@ -120,7 +120,7 @@ fn context_carries_product_from_config() {
     ))
     .unwrap();
     let f = r.tmp().join("config.toml");
-    let root = dunce::canonicalize(&r.tmp()).unwrap();
+    let root = dunce::canonicalize(r.tmp()).unwrap();
     fs::write(
         &f,
         format!("[products.demo]\npath = \"{}\"\n", root.display()),
