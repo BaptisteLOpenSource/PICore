@@ -149,7 +149,7 @@ Scan Root was removed.
 they sit under a rebuildable dir (`node_modules`, `target`, `build`, `dist`, `.next`...); `.env*`
 always blocks. A Fresh Worktree (no commit since it was added) is kept. A kept Worktree (unmerged,
 local changes) is removed only when you name it by path and pass `--force`. Main and locked
-Worktrees are never removed.
+Worktrees are never removed. An empty `<Project>.worktrees/` dir left behind is removed too.
 
 Scanning runs git inside your repositories. PICore neutralizes fsmonitor, a repo-local `core.sshCommand` and the
 `ext` protocol, but a `filter.*.clean` driver declared through `.gitattributes` and your git config
@@ -183,7 +183,7 @@ Success is `{"schema":1,"data":...}`. `null` always means unknown, never zero or
   `null` without an upstream; when git fails or the directory is gone, `error` says why and the
   counts are `null`.
 - `worktrees`: `[{"project","path","branch","verdict","reason","stale"}]`. `prune` wraps the same rows,
-  plus `"removed"` and `"error"`, in `{"dry_run","pruned":[...]}`.
+  plus `"removed"` and `"error"`, in `{"dry_run","pruned":[...],"containers":[...]}` (empty `<Project>.worktrees` dirs).
 
 | `verdict` | `reason` |
 |---|---|
