@@ -10,7 +10,10 @@ use picore_core::refresh::scan;
 use support::TestRepo;
 
 fn project(r: &TestRepo) -> picore_core::model::Project {
-    scan(&ProjectId(r.path().join(".git").canonicalize().unwrap())).unwrap()
+    scan(&ProjectId(
+        dunce::canonicalize(r.path().join(".git")).unwrap(),
+    ))
+    .unwrap()
 }
 
 #[test]
@@ -25,7 +28,7 @@ fn dirty_count_and_no_remote_check_by_default() {
 #[test]
 fn bare_project_has_no_worktree_rows() {
     let r = TestRepo::bare_with_worktree();
-    let p = scan(&ProjectId(r.path().canonicalize().unwrap())).unwrap();
+    let p = scan(&ProjectId(dunce::canonicalize(r.path()).unwrap())).unwrap();
     assert!(project_health(&p, false).worktrees.is_empty());
 }
 
@@ -42,7 +45,7 @@ fn dirty_linked_worktree_reported_in_its_own_row() {
         .map(|w| (w.branch.as_deref(), w.dirty))
         .collect();
     assert_eq!(rows, [(Some("main"), Some(0)), (Some("feat"), Some(1))]);
-    assert_eq!(h.worktrees[1].path, wt.canonicalize().unwrap());
+    assert_eq!(h.worktrees[1].path, dunce::canonicalize(&wt).unwrap());
 }
 
 #[test]
