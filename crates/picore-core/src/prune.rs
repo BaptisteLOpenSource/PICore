@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -6,7 +7,8 @@ use serde::Serialize;
 use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::git;
-use crate::model::{Project, Worktree};
+use crate::model::{Project, Worktree, project_dir};
+use crate::wtname;
 
 const DAY: i64 = 86_400;
 // Not Config ignore_dirs: a discovery setting must not widen deletion.
@@ -204,6 +206,18 @@ fn verdict(wt: &Worktree, merge: &Result<Option<(MergeState, bool)>>) -> Result<
     } else {
         Verdict::Prunable(Reason::Merged)
     })
+}
+
+/// `<Project>.worktrees` when it is a real dir with no entry left.
+pub fn empty_container(p: &Project) -> Option<PathBuf> {
+    let dir = wtname::container(project_dir(&p.id));
+    let real = dir.symlink_metadata().is_ok_and(|m| m.is_dir());
+    (real && fs::read_dir(&dir).is_ok_and(|mut e| e.next().is_none())).then_some(dir)
+}
+
+/// remove_dir, not remove_dir_all: a file landing since the check stops it.
+pub fn remove_container(dir: &Path) -> Result<()> {
+    Ok(fs::remove_dir(dir)?)
 }
 
 pub fn remove(p: &Project, a: &Assessment, force: bool) -> Result<()> {

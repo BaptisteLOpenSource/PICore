@@ -635,6 +635,8 @@ struct PruneRow<'a> {
 struct PruneReport<'a> {
     dry_run: bool,
     pruned: Vec<PruneRow<'a>>,
+    /// Empty `<Project>.worktrees` dirs, removed unless dry run.
+    containers: Vec<PathBuf>,
 }
 
 fn prune_cmd(json: bool, target: Option<&str>, yes: bool, force: bool) -> Result<ExitCode> {
@@ -692,12 +694,28 @@ fn prune_cmd(json: bool, target: Option<&str>, yes: bool, force: bool) -> Result
             }
         })
         .collect();
-    let failed = rows
+    let mut failed = rows
         .iter()
         .any(|r| r.error.is_some() || unknown(r.row.assessment));
+    // A targeted prune sweeps only its own Project's container.
+    let swept = match target {
+        None => all,
+        Some(_) => picked.iter().map(|(p, _)| *p).collect(),
+    };
+    let mut containers = Vec::new();
+    for dir in swept.into_iter().filter_map(prune::empty_container) {
+        match yes.then(|| prune::remove_container(&dir)) {
+            Some(Err(e)) => {
+                eprintln!("error: {}: {e}", dir.display());
+                failed = true;
+            }
+            _ => containers.push(dir),
+        }
+    }
     let report = PruneReport {
         dry_run: !yes,
         pruned: rows,
+        containers,
     };
     emit(json, &report, |r| {
         if r.dry_run {
@@ -708,6 +726,9 @@ fn prune_cmd(json: bool, target: Option<&str>, yes: bool, force: bool) -> Result
             if let Some(e) = &row.error {
                 eprintln!("error: {}: {e}", row.row.assessment.path.display());
             }
+        }
+        for dir in &r.containers {
+            println!("-\t{}\tEmptyContainer", dir.display());
         }
     });
     Ok(exit(failed))

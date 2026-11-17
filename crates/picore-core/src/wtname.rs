@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
@@ -59,19 +59,23 @@ pub fn slug(title: &str) -> String {
     cut.trim_matches('-').into()
 }
 
-pub fn worktree_name(project_dir: &Path, issue: u32, title: &str) -> WorktreeName {
-    let slug = slug(title);
-    let slug = if slug.is_empty() { "issue" } else { &slug };
-    let branch = format!("{issue}-{slug}");
+/// `<Project>.worktrees`, sibling of the Project dir.
+pub fn container(project_dir: &Path) -> PathBuf {
     let name = project_dir
         .file_name()
         .unwrap_or_default()
         .to_string_lossy();
-    let path = project_dir
+    project_dir
         .parent()
         .unwrap_or(project_dir)
         .join(format!("{name}.worktrees"))
-        .join(&branch);
+}
+
+pub fn worktree_name(project_dir: &Path, issue: u32, title: &str) -> WorktreeName {
+    let slug = slug(title);
+    let slug = if slug.is_empty() { "issue" } else { &slug };
+    let branch = format!("{issue}-{slug}");
+    let path = container(project_dir).join(&branch);
     WorktreeName {
         branch,
         path: path.display().to_string(),
