@@ -77,6 +77,7 @@ export type Assessment = {
   branch: string | null;
   verdict: "prunable" | "kept" | "unknown";
   reason: string;
+  merge: "merged" | "merged_local" | "unmerged" | "conflicts" | null;
   stale: boolean;
 };
 

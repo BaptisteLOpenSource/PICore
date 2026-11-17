@@ -57,12 +57,28 @@ pub enum Blocker {
     NoDefaultBranch,
 }
 
+/// Whether the Worktree's work has landed, apart from what blocks removal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeState {
+    /// In `origin/<default>` or `origin/dev` (merged or squash-merged).
+    Merged,
+    /// Only in local `<default>` or `dev`: not pushed yet.
+    MergedLocal,
+    /// Not landed; merges cleanly into dev (else default).
+    Unmerged,
+    /// Not landed; would conflict with dev (else default).
+    Conflicts,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Assessment {
     pub path: PathBuf,
     pub branch: Option<String>,
     #[serde(flatten)]
     pub verdict: Verdict,
+    /// None: main, missing dir, unborn branch, no default branch, or git failed.
+    pub merge: Option<MergeState>,
     pub stale: bool,
 }
 
@@ -70,12 +86,54 @@ pub fn assess(p: &Project, wt: &Worktree, cfg: &Config, now: i64) -> Assessment 
     let stale = wt
         .last_commit_at
         .is_some_and(|t| now - t > i64::from(cfg.stale_days) * DAY);
+    let merge = match wt.head.as_deref() {
+        Some(head) if !wt.is_main && wt.path.is_dir() => merge_state(&p.id.0, head),
+        _ => Ok(None),
+    };
     Assessment {
         path: wt.path.clone(),
         branch: wt.branch.clone(),
-        verdict: verdict(&p.id.0, wt).unwrap_or_else(|e| Verdict::Unknown(e.to_string())),
+        verdict: verdict(wt, &merge).unwrap_or_else(|e| Verdict::Unknown(e.to_string())),
+        merge: merge.ok().flatten().map(|(m, _)| m),
         stale,
     }
+}
+
+// bool = removable: a remote target holds the tip and it moved past it.
+fn merge_state(repo: &Path, head: &str) -> Result<Option<(MergeState, bool)>> {
+    use git::MergeTree::{Conflicts, Merged, SameTip};
+    let Some(default) = git::default_branch(repo)? else {
+        return Ok(None);
+    };
+    // dev first: PRs land there, so it judges conflict risk.
+    let remote = git::remote_branch(repo, "dev")?
+        .into_iter()
+        .chain([default.clone()]);
+    let (mut risk, mut same_tip) = (None, false);
+    for target in remote {
+        match git::merge_tree(repo, head, &target)? {
+            Merged => return Ok(Some((MergeState::Merged, true))),
+            SameTip => same_tip = true,
+            m => _ = risk.get_or_insert(m),
+        }
+    }
+    if same_tip {
+        return Ok(Some((MergeState::Merged, false)));
+    }
+    let local_default = default.strip_prefix("origin/").unwrap_or(&default);
+    for name in ["dev", local_default] {
+        if let Some(local) = git::local_branch(repo, name)?
+            && matches!(git::merge_tree(repo, head, &local)?, SameTip | Merged)
+        {
+            return Ok(Some((MergeState::MergedLocal, false)));
+        }
+    }
+    let state = if risk == Some(Conflicts) {
+        MergeState::Conflicts
+    } else {
+        MergeState::Unmerged
+    };
+    Ok(Some((state, false)))
 }
 
 /// Every Worktree of `p`, main included, assessed now.
@@ -89,7 +147,7 @@ pub fn assess_project(p: &Project, cfg: &Config) -> Vec<Assessment> {
         .collect()
 }
 
-fn verdict(repo: &Path, wt: &Worktree) -> Result<Verdict> {
+fn verdict(wt: &Worktree, merge: &Result<Option<(MergeState, bool)>>) -> Result<Verdict> {
     if wt.is_main {
         return Ok(Verdict::Kept(Blocker::Main));
     }
@@ -124,20 +182,19 @@ fn verdict(repo: &Path, wt: &Worktree) -> Result<Verdict> {
     if blocking {
         return Ok(Verdict::Kept(Blocker::IgnoredFiles));
     }
-    let Some(default) = git::default_branch(repo)? else {
+    // Unborn worktree has no tip: nothing to merge, so it stays.
+    if wt.head.is_none() {
+        return Ok(Verdict::Kept(Blocker::NotMerged));
+    }
+    let merge = match merge {
+        Ok(m) => *m,
+        Err(e) => return Ok(Verdict::Unknown(e.to_string())),
+    };
+    let Some((_, removable)) = merge else {
         return Ok(Verdict::Kept(Blocker::NoDefaultBranch));
     };
-    // Unborn worktree has no tip: nothing to merge, so it stays.
-    let Some(head) = wt.head.as_deref() else {
-        return Ok(Verdict::Kept(Blocker::NotMerged));
-    };
-    // PRs land in dev before a release reaches the default branch.
-    let dev = git::remote_branch(repo, "dev")?;
-    let mut merged = false;
-    for target in [Some(default), dev].into_iter().flatten() {
-        merged = merged || git::is_merged(repo, head, &target)?;
-    }
-    if !merged {
+    // MergedLocal stays: unpushed work is lost with the Worktree.
+    if !removable {
         return Ok(Verdict::Kept(Blocker::NotMerged));
     }
     // Tip older than the Worktree: no own commit, e.g. a new workspace on a stale base.

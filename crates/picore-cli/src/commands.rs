@@ -587,11 +587,13 @@ struct WorktreeRow<'a> {
 }
 
 fn print_row(r: &WorktreeRow) {
+    let merge = r.assessment.merge.map(|m| format!("\t{m:?}"));
     println!(
-        "{}\t{}\t{:?}",
+        "{}\t{}\t{:?}{}",
         r.project,
         r.assessment.path.display(),
-        r.assessment.verdict
+        r.assessment.verdict,
+        merge.unwrap_or_default()
     );
 }
 

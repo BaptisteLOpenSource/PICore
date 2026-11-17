@@ -306,16 +306,33 @@ pub fn remote_branch(repo: &Path, name: &str) -> Result<Option<String>> {
     Ok(verifies(repo, &format!("refs/remotes/origin/{name}"))?.then(|| format!("origin/{name}")))
 }
 
-// Merged = merging tip into `into` leaves into's tree unchanged: covers squash merges.
+pub fn local_branch(repo: &Path, name: &str) -> Result<Option<String>> {
+    let r = format!("refs/heads/{name}");
+    Ok(verifies(repo, &r)?.then_some(r))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MergeTree {
+    SameTip,
+    Merged,
+    Clean,
+    Conflicts,
+}
+
+// Same tip = fresh branch, nothing landed yet.
 pub fn is_merged(repo: &Path, tip: &str, into: &str) -> Result<bool> {
+    Ok(merge_tree(repo, tip, into)? == MergeTree::Merged)
+}
+
+// Merged = merging tip into `into` leaves into's tree unchanged: covers squash merges.
+pub fn merge_tree(repo: &Path, tip: &str, into: &str) -> Result<MergeTree> {
     let rev = |r: &str| {
         git(repo, &["rev-parse", "--verify", "--end-of-options", r])
             .map(|o| o.trim_end_matches('\n').to_owned())
     };
     let (tip, into) = (rev(tip)?, rev(into)?);
-    // Same tip: fresh branch, nothing landed yet.
     if tip == into {
-        return Ok(false);
+        return Ok(MergeTree::SameTip);
     }
     let tree = rev(&format!("{into}^{{tree}}"))?;
     // merge-tree writes objects: send them to a scratch dir, never into the Project.
@@ -343,8 +360,9 @@ pub fn is_merged(repo: &Path, tip: &str, into: &str) -> Result<bool> {
         &tip,
     ];
     match git_env(repo, &[], &env, &args) {
-        Ok(out) => Ok(out.lines().next() == Some(tree.as_str())),
-        Err(Error::Proc(ProcError::Failed { code: Some(1), .. })) => Ok(false),
+        Ok(out) if out.lines().next() == Some(tree.as_str()) => Ok(MergeTree::Merged),
+        Ok(_) => Ok(MergeTree::Clean),
+        Err(Error::Proc(ProcError::Failed { code: Some(1), .. })) => Ok(MergeTree::Conflicts),
         Err(e) => Err(e),
     }
 }

@@ -115,7 +115,7 @@ impl Handler {
     }
 
     #[tool(
-        description = "Worktrees of a Project, main included, with prune verdict: `verdict` prunable|kept|unknown, `reason` e.g. merged, missing, changes, not_merged (unknown: the git error, never pruned). `stale` = last commit older than the configured stale_days; false when the date is unknown (e.g. Missing directory), and says nothing about whether the Worktree is prunable."
+        description = "Worktrees of a Project, main included, with prune verdict: `verdict` prunable|kept|unknown, `reason` e.g. merged, missing, changes, not_merged (unknown: the git error, never pruned). `merge` merged|merged_local|unmerged|conflicts|null: whether the work landed (merged_local = only in local default/dev, unpushed; conflicts = would conflict with dev), computed even when another reason keeps it. `stale` = last commit older than the configured stale_days; false when the date is unknown (e.g. Missing directory), and says nothing about whether the Worktree is prunable."
     )]
     fn list_worktrees(&self, Parameters(a): Parameters<ProjectArg>) -> Result<String, String> {
         text(self.0.list_worktrees(&a.project))

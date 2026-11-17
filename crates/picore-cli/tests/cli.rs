@@ -311,7 +311,10 @@ fn prune_dry_run_shows_reason() {
             .to_owned()
     };
     assert!(line(&gone).ends_with("Prunable(Missing)"), "{text}");
-    assert!(line(&merged).ends_with("Prunable(Merged)"), "{text}");
+    assert!(
+        line(&merged).ends_with("Prunable(Merged)\tMerged"),
+        "{text}"
+    );
 
     let out = sb.picore(&["--json", "prune"]);
     let rows = json(&out)["data"]["pruned"].clone();

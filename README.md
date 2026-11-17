@@ -182,7 +182,10 @@ Success is `{"schema":1,"data":...}`. `null` always means unknown, never zero or
   A Row is `{"path","branch","dirty","ahead","behind","upstream","error"}`: `ahead`/`behind` are
   `null` without an upstream; when git fails or the directory is gone, `error` says why and the
   counts are `null`.
-- `worktrees`: `[{"project","path","branch","verdict","reason","stale"}]`. `prune` wraps the same rows,
+- `worktrees`: `[{"project","path","branch","verdict","reason","merge","stale"}]`.
+  `merge` (null on main or missing): `merged` (in `origin/<default>` or `origin/dev`),
+  `merged_local` (only in local `<default>`/`dev`, not pushed), `unmerged`, `conflicts` (would
+  conflict with dev). Computed even when another reason keeps the Worktree. `prune` wraps the same rows,
   plus `"removed"` and `"error"`, in `{"dry_run","pruned":[...]}`.
 
 | `verdict` | `reason` |
