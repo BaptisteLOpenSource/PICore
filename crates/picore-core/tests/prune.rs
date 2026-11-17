@@ -5,7 +5,7 @@ use std::fs;
 
 use picore_core::config::Config;
 use picore_core::model::{Project, ProjectId};
-use picore_core::prune::{Blocker, Reason, Verdict, assess, remove};
+use picore_core::prune::{Blocker, MergeState, Reason, Verdict, assess, remove};
 use picore_core::refresh::scan;
 use support::TestRepo;
 
@@ -380,4 +380,77 @@ fn nested_repo_in_rebuildable_dir_is_kept() {
     fs::create_dir_all(&nested).unwrap();
     r.run_in(&nested, &["init", "-q"]);
     assert_eq!(verdict_of(&r), Verdict::Kept(Blocker::IgnoredFiles));
+}
+
+fn merge_of(r: &TestRepo) -> Option<MergeState> {
+    let p = project(r);
+    assess(&p, linked(&p), &Config::default(), now()).merge
+}
+
+#[test]
+fn merge_state_reported_past_removal_blocker() {
+    let r = TestRepo::new();
+    r.write(".gitignore", "*.key\n");
+    r.commit("ignore");
+    let wt = feat_worktree(&r);
+    merge_feat(&r);
+    fs::write(wt.join("secret.key"), "k").unwrap();
+    let p = project(&r);
+    let a = assess(&p, linked(&p), &Config::default(), now());
+    assert_eq!(a.verdict, Verdict::Kept(Blocker::IgnoredFiles));
+    assert_eq!(a.merge, Some(MergeState::Merged));
+}
+
+#[test]
+fn merged_in_local_branch_only_is_merged_local_and_kept() {
+    let r = TestRepo::new();
+    feat_worktree(&r);
+    set_origin(&r, "main", "main");
+    set_origin_head(&r);
+    merge_feat(&r);
+    assert_eq!(merge_of(&r), Some(MergeState::MergedLocal));
+    assert_eq!(verdict_of(&r), Verdict::Kept(Blocker::NotMerged));
+}
+
+#[test]
+fn detached_head_on_default_is_merged() {
+    let r = TestRepo::new();
+    let wt = r.tmp().join("wt");
+    r.run(&[
+        "worktree",
+        "add",
+        "-q",
+        "--detach",
+        wt.to_str().unwrap(),
+        "main",
+    ]);
+    assert_eq!(merge_of(&r), Some(MergeState::Merged));
+    assert_eq!(verdict_of(&r), Verdict::Kept(Blocker::Detached));
+}
+
+#[test]
+fn unmerged_reports_conflict_risk() {
+    let r = TestRepo::new();
+    let wt = r.tmp().join("wt");
+    r.add_worktree(&wt, "feat");
+    fs::write(wt.join("same.txt"), "feat").unwrap();
+    r.commit_in(&wt, "feat side", None);
+    assert_eq!(merge_of(&r), Some(MergeState::Unmerged));
+    r.write("same.txt", "main");
+    r.commit("main side");
+    assert_eq!(merge_of(&r), Some(MergeState::Conflicts));
+}
+
+#[test]
+fn main_and_missing_have_no_merge_state() {
+    let r = TestRepo::new();
+    let wt = feat_worktree(&r);
+    fs::remove_dir_all(&wt).unwrap();
+    let p = project(&r);
+    let all: Vec<_> = p
+        .worktrees
+        .iter()
+        .map(|w| assess(&p, w, &Config::default(), now()).merge)
+        .collect();
+    assert_eq!(all, [None, None]);
 }
