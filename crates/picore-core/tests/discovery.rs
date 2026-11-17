@@ -34,7 +34,7 @@ fn finds_repo_worktree_dedupes_to_one_project() {
     assert_eq!(ids.len(), 1);
     assert_eq!(
         ids[0].0,
-        dunce::canonicalize(&r.path().join(".git")).unwrap()
+        dunce::canonicalize(r.path().join(".git")).unwrap()
     );
 }
 
@@ -76,7 +76,7 @@ fn skips_nested_repo_and_ignore_dirs() {
     assert_eq!(ids.len(), 1);
     assert_eq!(
         ids[0].0,
-        dunce::canonicalize(&scan.join("repo/.git")).unwrap()
+        dunce::canonicalize(scan.join("repo/.git")).unwrap()
     );
     assert_eq!(project_name(&ids[0]), "repo");
 }
@@ -97,7 +97,7 @@ fn skips_submodule() {
     assert_eq!(ids.len(), 1);
     assert_eq!(
         ids[0].0,
-        dunce::canonicalize(&outer.path().join(".git")).unwrap()
+        dunce::canonicalize(outer.path().join(".git")).unwrap()
     );
 }
 
@@ -117,7 +117,7 @@ fn root_itself_is_repo() {
     assert_eq!(ids.len(), 1);
     assert_eq!(
         ids[0].0,
-        dunce::canonicalize(&r.path().join(".git")).unwrap()
+        dunce::canonicalize(r.path().join(".git")).unwrap()
     );
 }
 
