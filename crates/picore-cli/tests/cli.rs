@@ -414,7 +414,7 @@ fn status_by_worktree_subdir_reports_each_worktree_and_remote() {
         String::from_utf8_lossy(&out.stderr)
     );
     let text = String::from_utf8(out.stdout).unwrap();
-    let wt = fs::canonicalize(&wt).unwrap();
+    let wt = dunce::canonicalize(&wt).unwrap();
     assert!(text.contains("a: remote Unknown"), "{text}");
     assert!(
         text.contains(&format!("a {}: dirty 1 no upstream", wt.display())),
@@ -563,8 +563,8 @@ fn path_prints_project_dir_and_json() {
     assert!(out.status.success());
     let printed = String::from_utf8(out.stdout).unwrap();
     assert_eq!(
-        fs::canonicalize(printed.trim()).unwrap(),
-        fs::canonicalize(&repo).unwrap()
+        dunce::canonicalize(printed.trim()).unwrap(),
+        dunce::canonicalize(&repo).unwrap()
     );
     let v = json(&sb.picore(&["--json", "path", "a"]));
     assert_eq!(v["data"]["path"].as_str().unwrap(), printed.trim());

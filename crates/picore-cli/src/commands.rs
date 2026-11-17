@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 use std::env;
-use std::fs;
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
@@ -647,7 +646,7 @@ fn prune_cmd(json: bool, target: Option<&str>, yes: bool, force: bool) -> Result
             .filter(|(_, a)| matches!(a.verdict, Verdict::Prunable(_) | Verdict::Unknown(_)))
             .collect(),
         Some(t) => {
-            let path = fs::canonicalize(t).unwrap_or_else(|_| PathBuf::from(t));
+            let path = dunce::canonicalize(t).unwrap_or_else(|_| PathBuf::from(t));
             let mut hits: Vec<_> = assessed
                 .into_iter()
                 .filter(|(_, a)| a.path == path || a.branch.as_deref() == Some(t))

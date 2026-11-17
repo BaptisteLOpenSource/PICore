@@ -89,7 +89,7 @@ fn by_path<'a>(projects: &'a [Project], query: &str) -> Resolution<'a> {
         },
         None => PathBuf::from(query),
     };
-    let path = raw.canonicalize().unwrap_or(raw);
+    let path = dunce::canonicalize(&raw).unwrap_or(raw);
     projects
         .iter()
         .flat_map(|p| p.worktrees.iter().map(move |w| (p, w)))

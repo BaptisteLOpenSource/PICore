@@ -192,7 +192,7 @@ mod tests {
             .status()
             .unwrap();
         assert!(ok.success());
-        let id = ProjectId(std::fs::canonicalize(repo.join(".git")).unwrap());
+        let id = ProjectId(dunce::canonicalize(repo.join(".git")).unwrap());
         s.index.lock().unwrap().upsert(&scan(&id).unwrap()).unwrap();
         (id.0.display().to_string(), id)
     }
@@ -262,7 +262,7 @@ mod tests {
         let id = v["projects"][0]["id"].as_str().unwrap();
         assert_eq!(
             std::path::Path::new(id),
-            dir.path().join("repo").canonicalize().unwrap()
+            dunce::canonicalize(dir.path().join("repo")).unwrap()
         );
         let id = id.to_owned();
         s.get_project_context(&id).unwrap();
@@ -292,7 +292,7 @@ mod tests {
                 .arg(&repo)
                 .status()
                 .unwrap();
-            let id = ProjectId(std::fs::canonicalize(repo.join(".git")).unwrap());
+            let id = ProjectId(dunce::canonicalize(repo.join(".git")).unwrap());
             s.index.lock().unwrap().upsert(&scan(&id).unwrap()).unwrap();
         }
         let v = s.list_projects().unwrap();
@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn product_exposed_in_list_and_context() {
         let dir = TempDir::new().unwrap();
-        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
         std::fs::write(
             dir.path().join("config.toml"),
             format!("[products.demo]\npath = \"{}\"\n", root.display()),
@@ -351,7 +351,7 @@ mod tests {
         let s = server(&dir);
         git_project(&dir, &s);
         assert!(s.list_projects().unwrap()["projects"][0]["product"].is_null());
-        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let root = dunce::canonicalize(dir.path()).unwrap();
         std::fs::write(
             dir.path().join("config.toml"),
             format!("[products.demo]\npath = \"{}\"\n", root.display()),
@@ -371,7 +371,7 @@ mod tests {
             .status()
             .unwrap();
         assert!(ok.success());
-        let id = ProjectId(std::fs::canonicalize(&bare).unwrap());
+        let id = ProjectId(dunce::canonicalize(&bare).unwrap());
         s.index.lock().unwrap().upsert(&scan(&id).unwrap()).unwrap();
         let listed = s.list_projects().unwrap();
         let pid = listed["projects"][0]["id"].as_str().unwrap().to_owned();
@@ -386,7 +386,7 @@ mod tests {
             .status()
             .unwrap();
         assert!(ok.success());
-        let id = ProjectId(std::fs::canonicalize(repo.join(".git")).unwrap());
+        let id = ProjectId(dunce::canonicalize(repo.join(".git")).unwrap());
         s.index.lock().unwrap().upsert(&scan(&id).unwrap()).unwrap();
         id
     }
