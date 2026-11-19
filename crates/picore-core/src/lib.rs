@@ -9,6 +9,7 @@ pub mod info;
 pub mod model;
 pub mod process;
 pub mod prune;
+pub mod pull;
 pub mod refresh;
 pub mod resolve;
 pub mod store;

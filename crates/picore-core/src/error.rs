@@ -20,6 +20,8 @@ pub enum Error {
     NotFound(String),
     #[error("ambiguous: {0:?}")]
     Ambiguous(Vec<String>),
+    #[error("refused: {0}")]
+    Refused(String),
 }
 
 impl Error {
@@ -31,6 +33,7 @@ impl Error {
             Error::Config(_) => "config",
             Error::NotFound(_) => "not_found",
             Error::Ambiguous(_) => "ambiguous",
+            Error::Refused(_) => "refused",
             Error::Store(_) | Error::Io(_) => "io",
         }
     }

@@ -2,6 +2,7 @@ use std::env;
 use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::Serialize;
 
@@ -172,6 +173,17 @@ pub fn worktrees(repo: &Path) -> Result<Vec<WorktreeEntry>> {
         repo,
         &["worktree", "list", "--porcelain", "-z"],
     )?))
+}
+
+// Network: outlives the 5s status budget. Fast-forward only, never merges.
+pub fn pull_ff_only(work_tree: &Path) -> Result<String> {
+    Ok(process::run_env(
+        "git",
+        work_tree,
+        &["-c", "core.fsmonitor=false", "pull", "--ff-only"],
+        &[],
+        Duration::from_secs(120),
+    )?)
 }
 
 pub fn status(work_tree: &Path) -> Result<StatusSummary> {

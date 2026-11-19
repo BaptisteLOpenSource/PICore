@@ -14,6 +14,7 @@ use picore_core::health::{Check, ProjectHealth, machine_health, project_health};
 use picore_core::info::{self, Info};
 use picore_core::model::{Project, project_dir};
 use picore_core::prune::{self, Assessment, Blocker, Verdict};
+use picore_core::pull;
 use picore_core::refresh::{index_all, refresh_all};
 use picore_core::resolve::{Resolution, Target, qualified, resolve};
 use picore_core::store::Index;
@@ -43,6 +44,7 @@ pub fn run(json: bool, quiet: bool, cmd: &Cmd) -> ExitCode {
             remote,
             files,
         } => status(json, name.as_deref(), *remote, *files),
+        Cmd::Pull { name } => pull_cmd(json, name),
         Cmd::Worktrees { name } => worktrees(json, name.as_deref()),
         Cmd::Prune { target, yes, force } => prune_cmd(json, target.as_deref(), *yes, *force),
         Cmd::Completions { shell } => completions(*shell),
@@ -159,6 +161,15 @@ fn load() -> Result<Loaded> {
         eprintln!("warn: {}: {e}", id.0.display());
     }
     Ok(Loaded { cfg, projects })
+}
+
+fn pull_cmd(json: bool, name: &str) -> Result<ExitCode> {
+    let projects = load()?.projects;
+    let report = pull::pull(target(json, &projects, name)?.project)?;
+    emit(json, &report, |r| {
+        println!("{}: {}", r.branch, r.output.trim())
+    });
+    Ok(ExitCode::SUCCESS)
 }
 
 fn exit(failed: bool) -> ExitCode {

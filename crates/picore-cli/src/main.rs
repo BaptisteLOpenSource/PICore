@@ -62,6 +62,10 @@ pub enum Cmd {
         #[arg(long)]
         files: bool,
     },
+    /// Fast-forward a Project's checked-out branch from its remote (never merges)
+    Pull {
+        name: String,
+    },
     Worktrees {
         name: Option<String>,
     },
