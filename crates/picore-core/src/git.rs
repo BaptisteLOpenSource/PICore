@@ -176,25 +176,38 @@ pub fn worktrees(repo: &Path) -> Result<Vec<WorktreeEntry>> {
 }
 
 // Network: outlives the 5s status budget. Fast-forward only, never merges.
-// Repo-local filters and hooks are untrusted: blank them, as status does.
+// Repo-local config names programs (ssh, credential, askPass, proxy, hooks, filters):
+// -c beats it, drivers are blanked, https and ssh only, no submodules.
 pub fn pull_ff_only(work_tree: &Path) -> Result<String> {
-    let env = driver_blanks(work_tree)?;
-    let env: Vec<(&str, &OsStr)> = env
+    let blanks = driver_blanks(work_tree)?;
+    let blanks: Vec<(&str, &OsStr)> = blanks
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_os_str()))
+        .collect();
+    let ssh = ssh_override(work_tree);
+    let mut config = vec![
+        "core.fsmonitor=false",
+        "core.hooksPath=/dev/null",
+        "core.askPass=",
+        "core.gitProxy=",
+        "credential.helper=",
+        "protocol.allow=never",
+        "protocol.https.allow=always",
+        "protocol.ssh.allow=always",
+        "submodule.recurse=false",
+        "fetch.recurseSubmodules=false",
+    ];
+    config.extend(ssh.as_deref());
+    let args: Vec<&str> = config
+        .iter()
+        .flat_map(|c| ["-c", c])
+        .chain(["pull", "--ff-only"])
         .collect();
     Ok(process::run_env(
         "git",
         work_tree,
-        &[
-            "-c",
-            "core.fsmonitor=false",
-            "-c",
-            "core.hooksPath=/dev/null",
-            "pull",
-            "--ff-only",
-        ],
-        &env,
+        &args,
+        &blanks,
         Duration::from_secs(120),
     )?)
 }
@@ -455,22 +468,25 @@ pub fn created_at(work_tree: &Path) -> Result<i64> {
     Ok(i64::try_from(secs).map_err(io::Error::other)?)
 }
 
+// ssh prompts on /dev/tty, which GIT_TERMINAL_PROMPT does not cover. The -c also
+// overrides a repo-local core.sshCommand; GIT_SSH_COMMAND from the user wins as is.
+fn ssh_override(work_tree: &Path) -> Option<String> {
+    if env::var_os("GIT_SSH_COMMAND").is_some() {
+        return None;
+    }
+    let base = git(
+        work_tree,
+        &["config", "--global", "--get", "core.sshCommand"],
+    )
+    .map(|v| v.trim().to_owned())
+    .ok()
+    .filter(|v| !v.is_empty())
+    .unwrap_or_else(|| "ssh".to_owned());
+    Some(format!("core.sshCommand={base} -o BatchMode=yes"))
+}
+
 pub fn ls_remote(work_tree: &Path) -> Result<()> {
-    // ssh prompts on /dev/tty, which GIT_TERMINAL_PROMPT does not cover. The -c also
-    // overrides a repo-local core.sshCommand; GIT_SSH_COMMAND from the user wins as is.
-    let ssh = if env::var_os("GIT_SSH_COMMAND").is_some() {
-        None
-    } else {
-        let base = git(
-            work_tree,
-            &["config", "--global", "--get", "core.sshCommand"],
-        )
-        .map(|v| v.trim().to_owned())
-        .ok()
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| "ssh".to_owned());
-        Some(format!("core.sshCommand={base} -o BatchMode=yes"))
-    };
+    let ssh = ssh_override(work_tree);
     // Repo-local config can name programs (uploadpack, credential.helper, askPass...):
     // read only the URL, run ls-remote outside the repo, allow https and ssh only.
     let url = git(work_tree, &["config", "--get", "remote.origin.url"])?;
