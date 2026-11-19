@@ -196,12 +196,18 @@ pub fn pull_ff_only(work_tree: &Path) -> Result<String> {
         "protocol.ssh.allow=always",
         "submodule.recurse=false",
         "fetch.recurseSubmodules=false",
+        "merge.verifySignatures=false",
+        "gpg.program=",
+        "gpg.ssh.program=",
+        "gpg.x509.program=",
+        "core.alternateRefsCommand=",
+        "pull.rebase=false",
     ];
     config.extend(ssh.as_deref());
     let args: Vec<&str> = config
         .iter()
         .flat_map(|c| ["-c", c])
-        .chain(["pull", "--ff-only"])
+        .chain(["pull", "--ff-only", "--no-verify-signatures"])
         .collect();
     Ok(process::run_env(
         "git",
