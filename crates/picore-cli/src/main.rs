@@ -58,6 +58,9 @@ pub enum Cmd {
         name: Option<String>,
         #[arg(long)]
         remote: bool,
+        /// List changed files under each Worktree
+        #[arg(long)]
+        files: bool,
     },
     Worktrees {
         name: Option<String>,

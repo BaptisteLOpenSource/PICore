@@ -81,6 +81,7 @@ function Info(props: { data: DetailData }) {
             {(w) => {
               const verdict = () => props.data.prune.find((a) => a.path === w.path);
               const error = () => health().worktrees.find((h) => h.path === w.path)?.error;
+              const changed = () => health().worktrees.find((h) => h.path === w.path)?.files ?? [];
               return (
                 <li class="flex min-h-[44px] flex-col justify-center gap-0.5 py-2">
                   <span class="flex items-center gap-2">
@@ -99,6 +100,21 @@ function Info(props: { data: DetailData }) {
                     <Show when={w.issue}>{(n) => <span class="flex-none text-text">#{n()}</span>}</Show>
                   </span>
                   <Show when={error()}>{(e) => <span class="text-[12px] text-alert">{e()}</span>}</Show>
+                  <Show when={changed().length > 0}>
+                    <ul class="flex flex-col gap-0.5 font-mono text-[12px]">
+                      <For each={changed().slice(0, 20)}>
+                        {(f) => (
+                          <li class="flex gap-2 truncate" title={f.path}>
+                            <span class="w-20 flex-none text-muted">{f.kind}</span>
+                            <span class="min-w-0 truncate">{f.path}</span>
+                          </li>
+                        )}
+                      </For>
+                      <Show when={changed().length > 20}>
+                        <li class="text-muted">+{changed().length - 20} more</li>
+                      </Show>
+                    </ul>
+                  </Show>
                   <Show when={verdict()?.verdict === "prunable" && verdict()}>
                     {(a) => (
                       <span class="flex items-center justify-between gap-2 text-[12px]">

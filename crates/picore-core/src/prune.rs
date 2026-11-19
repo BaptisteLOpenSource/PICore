@@ -162,7 +162,7 @@ fn verdict(wt: &Worktree, merge: &Result<Option<(MergeState, bool)>>) -> Result<
     if wt.detached {
         return Ok(Verdict::Kept(Blocker::Detached));
     }
-    if git::status(&wt.path)?.changes > 0 {
+    if git::status(&wt.path)?.changes() > 0 {
         return Ok(Verdict::Kept(Blocker::Changes));
     }
     let ignored = git::ignored_files(&wt.path)?;

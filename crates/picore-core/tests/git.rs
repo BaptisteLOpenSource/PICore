@@ -24,7 +24,10 @@ fn status_counts_changes_and_untracked() {
     r.write("a.txt", "x");
     r.write("README.md", "changed");
     let s = git::status(r.path()).unwrap();
-    assert_eq!((s.branch.as_deref(), s.changes), (Some("main"), 2));
+    assert_eq!((s.branch.as_deref(), s.changes()), (Some("main"), 2));
+    let mut paths: Vec<_> = s.files.iter().map(|f| f.path.as_str()).collect();
+    paths.sort();
+    assert_eq!(paths, ["README.md", "a.txt"]);
 }
 
 #[test]
@@ -100,7 +103,7 @@ fn parse_status_reads_ahead_behind() {
     let z = "# branch.oid abc\0# branch.head main\0# branch.upstream origin/main\0# branch.ab +2 -1\0? x\0";
     let s = git::parse_status(z);
     assert_eq!(
-        (s.ahead, s.behind, s.changes, s.upstream.as_deref()),
+        (s.ahead, s.behind, s.changes(), s.upstream.as_deref()),
         (Some(2), Some(1), 1, Some("origin/main"))
     );
 }
@@ -116,7 +119,35 @@ fn parse_status_skips_rename_origin_path() {
     let z =
         "# branch.head main\x002 R. N... 100644 100644 100644 a a R100 new name\0old name\0? x\0";
     let s = git::parse_status(z);
-    assert_eq!(s.changes, 2);
+    assert_eq!(s.changes(), 2);
+}
+
+#[test]
+fn parse_status_lists_each_file_with_kind() {
+    use git::ChangeKind::*;
+    let z = concat!(
+        "# branch.head main\0",
+        "1 .M N... 100644 100644 100644 a a with space.txt\0",
+        "1 A. N... 000000 100644 100644 a a added.txt\0",
+        "1 .D N... 100644 000000 000000 a a gone.txt\0",
+        "u UU N... 100644 100644 100644 100644 a b c clash.txt\0",
+        "? new dir/file.txt\0",
+    );
+    let got: Vec<_> = git::parse_status(z)
+        .files
+        .into_iter()
+        .map(|f| (f.path, f.kind))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("with space.txt".into(), Modified),
+            ("added.txt".into(), Added),
+            ("gone.txt".into(), Deleted),
+            ("clash.txt".into(), Conflicted),
+            ("new dir/file.txt".into(), Untracked),
+        ]
+    );
 }
 
 #[test]

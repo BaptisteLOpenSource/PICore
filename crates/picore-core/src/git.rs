@@ -3,6 +3,8 @@ use std::ffi::{OsStr, OsString};
 use std::io;
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
+
 use crate::error::{Error, Result};
 use crate::process::{self, ProcError, TIMEOUT};
 
@@ -16,13 +18,36 @@ pub struct WorktreeEntry {
     pub locked: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeKind {
+    Modified,
+    Added,
+    Deleted,
+    Renamed,
+    Untracked,
+    Conflicted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ChangedFile {
+    pub path: String,
+    pub kind: ChangeKind,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StatusSummary {
     pub branch: Option<String>,
     pub upstream: Option<String>,
     pub ahead: Option<u32>,
     pub behind: Option<u32>,
-    pub changes: u32,
+    pub files: Vec<ChangedFile>,
+}
+
+impl StatusSummary {
+    pub fn changes(&self) -> u32 {
+        u32::try_from(self.files.len()).unwrap_or(u32::MAX)
+    }
 }
 
 // Repo-local config is untrusted: fsmonitor would run a repo-chosen program on status.
@@ -102,19 +127,44 @@ pub fn parse_status(z: &str) -> StatusSummary {
             s.behind = counts
                 .next()
                 .and_then(|b| b.strip_prefix('-')?.parse().ok());
-        } else {
-            match field.split_once(' ') {
-                Some(("1" | "u" | "?", _)) => s.changes += 1,
-                // Rename/copy entries carry the original path as the next NUL field.
-                Some(("2", _)) => {
-                    s.changes += 1;
-                    fields.next();
-                }
-                _ => {}
+        } else if let Some((tag, body)) = field.split_once(' ') {
+            // Rename/copy entries carry the original path as the next NUL field.
+            let renamed = tag == "2";
+            if let Some(file) = change_entry(tag, body) {
+                s.files.push(file);
+            }
+            if renamed {
+                fields.next();
             }
         }
     }
     s
+}
+
+// Porcelain v2 change lines: fields before the path are fixed per tag.
+fn change_entry(tag: &str, body: &str) -> Option<ChangedFile> {
+    let before_path = match tag {
+        "1" => 7,
+        "2" => 8,
+        "u" => 9,
+        "?" => 0,
+        _ => return None,
+    };
+    let parts: Vec<&str> = body.splitn(before_path + 1, ' ').collect();
+    let path = parts.last()?.to_owned();
+    let xy = if before_path == 0 { "" } else { parts[0] };
+    let kind = match tag {
+        "?" => ChangeKind::Untracked,
+        "u" => ChangeKind::Conflicted,
+        "2" => ChangeKind::Renamed,
+        _ if xy.contains('D') => ChangeKind::Deleted,
+        _ if xy.starts_with('A') => ChangeKind::Added,
+        _ => ChangeKind::Modified,
+    };
+    Some(ChangedFile {
+        path: path.to_owned(),
+        kind,
+    })
 }
 
 pub fn worktrees(repo: &Path) -> Result<Vec<WorktreeEntry>> {

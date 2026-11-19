@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::error::{Error, Result};
 use crate::gh;
-use crate::git;
+use crate::git::{self, ChangedFile};
 use crate::model::Project;
 use crate::process::{self, ProcError, TIMEOUT};
 
@@ -30,6 +30,7 @@ pub struct WorktreeHealth {
     pub branch: Option<String>,
     // None = unknown (see `error`); ahead/behind None also = no upstream.
     pub dirty: Option<u32>,
+    pub files: Vec<ChangedFile>,
     pub ahead: Option<u32>,
     pub behind: Option<u32>,
     pub upstream: Option<String>,
@@ -143,6 +144,7 @@ pub fn project_health(p: &Project, remote: bool) -> ProjectHealth {
                 path: w.path.clone(),
                 branch: w.branch.clone(),
                 dirty: None,
+                files: Vec::new(),
                 ahead: None,
                 behind: None,
                 upstream: None,
@@ -154,7 +156,8 @@ pub fn project_health(p: &Project, remote: bool) -> ProjectHealth {
             }
             match git::status(&w.path) {
                 Ok(s) => {
-                    row.dirty = Some(s.changes);
+                    row.dirty = Some(s.changes());
+                    row.files = s.files;
                     (row.ahead, row.behind, row.upstream) = (s.ahead, s.behind, s.upstream);
                 }
                 Err(e) => row.error = Some(e.to_string()),

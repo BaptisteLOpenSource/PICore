@@ -18,10 +18,16 @@ export type Worktree = {
   issue: number | null;
 };
 
+export type ChangedFile = {
+  path: string;
+  kind: "modified" | "added" | "deleted" | "renamed" | "untracked" | "conflicted";
+};
+
 export type WorktreeHealth = {
   path: string;
   branch: string | null;
   dirty: number | null;
+  files: ChangedFile[];
   ahead: number | null;
   behind: number | null;
   upstream: string | null;

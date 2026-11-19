@@ -38,7 +38,11 @@ pub fn run(json: bool, quiet: bool, cmd: &Cmd) -> ExitCode {
         Cmd::Info { query } => info_cmd(json, query),
         Cmd::WtName { issue, project } => wt_name(json, *issue, project.as_deref()),
         Cmd::Init { shell } => init(*shell),
-        Cmd::Status { name, remote } => status(json, name.as_deref(), *remote),
+        Cmd::Status {
+            name,
+            remote,
+            files,
+        } => status(json, name.as_deref(), *remote, *files),
         Cmd::Worktrees { name } => worktrees(json, name.as_deref()),
         Cmd::Prune { target, yes, force } => prune_cmd(json, target.as_deref(), *yes, *force),
         Cmd::Completions { shell } => completions(*shell),
@@ -524,7 +528,7 @@ struct StatusReport<'a> {
     projects: Vec<StatusRow<'a>>,
 }
 
-fn status(json: bool, name: Option<&str>, remote: bool) -> Result<ExitCode> {
+fn status(json: bool, name: Option<&str>, remote: bool, files: bool) -> Result<ExitCode> {
     let projects = load()?.projects;
     let selected: Vec<&Project> = match name {
         Some(q) => vec![target(json, &projects, q)?.project],
@@ -562,6 +566,11 @@ fn status(json: bool, name: Option<&str>, remote: bool) -> Result<ExitCode> {
                     (None, d, ..) => format!("dirty {} no upstream", d.unwrap_or(0)),
                 };
                 println!("{} {}: {state}", p.name, w.path.display());
+                if files {
+                    for f in &w.files {
+                        println!("  {:?} {}", f.kind, f.path);
+                    }
+                }
             }
         }
     });
