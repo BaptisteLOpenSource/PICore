@@ -175,6 +175,19 @@ pub fn worktrees(repo: &Path) -> Result<Vec<WorktreeEntry>> {
     )?))
 }
 
+// Value of `key` from global or system scope only: a repo-local value must not win.
+fn user_config(work_tree: &Path, key: &str) -> String {
+    ["--global", "--system"]
+        .iter()
+        .find_map(|scope| {
+            git(work_tree, &["config", scope, "--get", key])
+                .ok()
+                .map(|v| v.trim().to_owned())
+                .filter(|v| !v.is_empty())
+        })
+        .unwrap_or_default()
+}
+
 // Network: outlives the 5s status budget. Fast-forward only, never merges.
 // Repo-local config names programs (ssh, credential, askPass, proxy, hooks, filters):
 // -c beats it, drivers are blanked, https and ssh only, no submodules.
@@ -184,8 +197,8 @@ pub fn pull_ff_only(work_tree: &Path) -> Result<String> {
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_os_str()))
         .collect();
-    let ssh = ssh_override(work_tree);
-    let mut config = vec![
+    // Signature checks stay as the user set them; their programs come from user scope only.
+    let mut config: Vec<String> = [
         "core.fsmonitor=false",
         "core.hooksPath=/dev/null",
         "core.askPass=",
@@ -196,18 +209,19 @@ pub fn pull_ff_only(work_tree: &Path) -> Result<String> {
         "protocol.ssh.allow=always",
         "submodule.recurse=false",
         "fetch.recurseSubmodules=false",
-        "merge.verifySignatures=false",
-        "gpg.program=",
-        "gpg.ssh.program=",
-        "gpg.x509.program=",
         "core.alternateRefsCommand=",
         "pull.rebase=false",
-    ];
-    config.extend(ssh.as_deref());
+    ]
+    .map(String::from)
+    .into();
+    for key in ["gpg.program", "gpg.ssh.program", "gpg.x509.program"] {
+        config.push(format!("{key}={}", user_config(work_tree, key)));
+    }
+    config.extend(ssh_override(work_tree));
     let args: Vec<&str> = config
         .iter()
-        .flat_map(|c| ["-c", c])
-        .chain(["pull", "--ff-only", "--no-verify-signatures"])
+        .flat_map(|c| ["-c", c.as_str()])
+        .chain(["pull", "--ff-only"])
         .collect();
     Ok(process::run_env(
         "git",
