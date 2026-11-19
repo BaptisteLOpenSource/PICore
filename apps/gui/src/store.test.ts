@@ -47,6 +47,7 @@ const row = (dirty: number, ahead: number | null, behind: number | null): Worktr
   path: "/w",
   branch: "main",
   dirty,
+  files: [],
   ahead,
   behind,
   upstream: ahead === null ? null : "origin/main",
