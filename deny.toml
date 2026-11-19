@@ -1,6 +1,7 @@
 [advisories]
 ignore = [
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained, compile-time only via gtk3-rs glib-macros 0.18 (tauri linux), no upgrade until tauri moves to gtk4" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained, transitive via rmcp and schemars, drop once they move off it" },
 ]
 
 [licenses]
