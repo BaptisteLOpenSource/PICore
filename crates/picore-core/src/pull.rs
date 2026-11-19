@@ -29,7 +29,8 @@ pub fn pull(p: &Project) -> Result<PullReport> {
     if s.changes() > 0 {
         return Err(Error::Refused(format!(
             "{}: {} local changes, commit or stash first",
-            p.name, s.changes()
+            p.name,
+            s.changes()
         )));
     }
     let output = git::pull_ff_only(dir)?;

@@ -176,12 +176,25 @@ pub fn worktrees(repo: &Path) -> Result<Vec<WorktreeEntry>> {
 }
 
 // Network: outlives the 5s status budget. Fast-forward only, never merges.
+// Repo-local filters and hooks are untrusted: blank them, as status does.
 pub fn pull_ff_only(work_tree: &Path) -> Result<String> {
+    let env = driver_blanks(work_tree)?;
+    let env: Vec<(&str, &OsStr)> = env
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_os_str()))
+        .collect();
     Ok(process::run_env(
         "git",
         work_tree,
-        &["-c", "core.fsmonitor=false", "pull", "--ff-only"],
-        &[],
+        &[
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "pull",
+            "--ff-only",
+        ],
+        &env,
         Duration::from_secs(120),
     )?)
 }
