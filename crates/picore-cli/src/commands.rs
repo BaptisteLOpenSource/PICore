@@ -579,7 +579,7 @@ fn status(json: bool, name: Option<&str>, remote: bool, files: bool) -> Result<E
                 println!("{} {}: {state}", p.name, w.path.display());
                 if files {
                     for f in &w.files {
-                        println!("  {:?} {}", f.kind, f.path);
+                        println!("  {:?} {}", f.kind, f.path.escape_debug());
                     }
                 }
             }
