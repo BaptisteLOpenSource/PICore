@@ -193,9 +193,11 @@ fn user_config(work_tree: &Path, key: &str) -> String {
 // -c beats it, drivers are blanked, https and ssh only, no submodules.
 pub fn pull_ff_only(work_tree: &Path) -> Result<String> {
     let blanks = driver_blanks(work_tree)?;
-    let blanks: Vec<(&str, &OsStr)> = blanks
+    // Env, not -c: repo-local protocol.<name>.allow beats -c protocol.allow.
+    let env: Vec<(&str, &OsStr)> = blanks
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_os_str()))
+        .chain([("GIT_ALLOW_PROTOCOL", OsStr::new("https:ssh"))])
         .collect();
     // Signature checks stay as the user set them; their programs come from user scope only.
     let mut config: Vec<String> = [
@@ -204,9 +206,6 @@ pub fn pull_ff_only(work_tree: &Path) -> Result<String> {
         "core.askPass=",
         "core.gitProxy=",
         "credential.helper=",
-        "protocol.allow=never",
-        "protocol.https.allow=always",
-        "protocol.ssh.allow=always",
         "submodule.recurse=false",
         "fetch.recurseSubmodules=false",
         "core.alternateRefsCommand=",
@@ -227,7 +226,7 @@ pub fn pull_ff_only(work_tree: &Path) -> Result<String> {
         "git",
         work_tree,
         &args,
-        &blanks,
+        &env,
         Duration::from_secs(120),
     )?)
 }

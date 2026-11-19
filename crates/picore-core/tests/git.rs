@@ -217,6 +217,19 @@ fn repo_local_uploadpack_is_not_run() {
     assert!(!marker.exists());
 }
 
+#[test]
+fn repo_local_ext_protocol_is_not_run_by_pull() {
+    let r = TestRepo::new();
+    let marker = r.tmp().join("marker");
+    let url = format!("ext::sh -c touch% {}", marker.display());
+    r.run(&["remote", "add", "origin", &url]);
+    r.run(&["config", "branch.main.remote", "origin"]);
+    r.run(&["config", "branch.main.merge", "refs/heads/main"]);
+    r.run(&["config", "protocol.ext.allow", "always"]);
+    assert!(git::pull_ff_only(r.path()).is_err());
+    assert!(!marker.exists());
+}
+
 fn assert_filter_not_run(bind: impl Fn(&TestRepo, &str)) {
     let r = TestRepo::new();
     let (marker, clean) = marker_script(&r);
