@@ -14,7 +14,7 @@ picore-core = { path = "../../../crates/picore-core" }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
-notify = "8"
+notify = "9"
 serde.workspace = true
 
 [build-dependencies]
